@@ -1,81 +1,58 @@
 import os
 import requests
-import re
-import json
+from bs4 import BeautifulSoup
 from supabase import create_client
 
-# 1. Configurazione Supabase
+# Configurazione
 url_sb = os.environ.get("SUPABASE_URL")
 key_sb = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url_sb, key_sb)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-}
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
 
-def avvia_scraper_definitivo():
-    # Puntiamo alla pagina del calendario 2024/2025
-    url = "https://comitati.fisi.org/veneto/calendario/?d=2025"
+def avvia():
+    # Usiamo l'ID competizione che avevi postato all'inizio
+    comp_id = "56789"
+    url = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
     
-    print(f"--- 🚀 ANALISI PAGINA CALENDARIO: {url} ---")
+    print(f"--- 🎯 TARGET: {url} ---")
     
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=30)
-        content = res.text
-        
-        # 2. CERCHIAMO I DATI NASCOSTI NEL JAVASCRIPT
-        # Il sito spesso salva i dati in una variabile chiamata 'data' o simile dentro un tag <script>
-        # Proviamo a estrarre tutto ciò che somiglia a un array di gare
-        print("--- 🔍 Ricerca pattern dati nel codice sorgente... ---")
-        
-        # Cerchiamo blocchi di testo che contengono "idComp" e sembrano JSON
-        matches = re.findall(r'\{"idComp":.*?\}(?=\s*[,\]])', content)
-        
-        if not matches:
-            # Se non troviamo JSON pronti, cerchiamo i link diretti alle gare nell'HTML
-            print("--- ⚠️ Nessun JSON trovato. Cerco link diretti alle gare... ---")
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(content, 'html.parser')
-            links = [l['href'] for l in soup.find_all('a', href=True) if 'idComp=' in l['href']]
-            matches = list(set(links))
+    res = requests.get(url, headers=HEADERS, timeout=30)
+    soup = BeautifulSoup(res.text, 'html.parser')
+    
+    # Cerchiamo tutti i link che portano a una gara specifica
+    # Questi link sono solitamente statici e leggibili
+    links = soup.find_all('a', href=True)
+    gare_trovate = []
+    
+    for l in links:
+        href = l['href']
+        if 'idGara=' in href:
+            # Puliamo l'URL
+            full_url = href if href.startswith('http') else f"https://comitati.fisi.org/veneto/{href}"
+            gare_trovate.append(full_url)
+            
+    print(f"--- 📊 GARE IDENTIFICATE NELLA PAGINA: {len(gare_trovate)} ---")
+    
+    if gare_trovate:
+        batch = []
+        for g in list(set(gare_trovate)): # Rimuove duplicati
+            id_gara = g.split('idGara=')[1].split('&')[0]
+            batch.append({
+                "id_gara_fisi": id_gara,
+                "gara_nome": f"Gara ID {id_gara}",
+                "localita": "Velo Veronese / Bosco",
+                "data": "2024/2025"
+            })
+            print(f"   > Rilevata Gara: {id_gara}")
 
-        if matches:
-            print(f"--- 📦 ELEMENTI TROVATI: {len(matches)} ---")
-            batch = []
-            for item in matches[:50]: # Proviamo i primi 50 per test
-                # Se è un JSON, lo puliamo e lo carichiamo
-                if item.startswith('{'):
-                    try:
-                        g = json.loads(item)
-                        batch.append({
-                            "id_gara_fisi": str(g.get('idComp', '')),
-                            "gara_nome": g.get('titolo_gara', 'Gara'),
-                            "localita": g.get('localita', ''),
-                            "data": g.get('data_gara', '')
-                        })
-                    except:
-                        continue
-                else:
-                    # Se è un link, estraiamo l'ID
-                    match_id = re.search(r'idComp=(\d+)', item)
-                    if match_id:
-                        batch.append({
-                            "id_gara_fisi": match_id.group(1),
-                            "gara_nome": "Gara da link",
-                            "data": "2025"
-                        })
-
-            if batch:
-                print(f"--- ✅ INVIO {len(batch)} RIGHE A SUPABASE ---")
-                supabase.table("gare").upsert(batch).execute()
-            else:
-                print("--- ❌ Nessun dato utile estratto dai match. ---")
-        else:
-            print("--- ❌ La pagina sembra vuota o protetta. ---")
-            print(f"DEBUG CONTENUTO (primi 200 car.): {content[:200]}")
-
-    except Exception as e:
-        print(f"--- 🔥 ERRORE: {e} ---")
+        # Invio a Supabase
+        print(f"--- 🚀 INVIO A DATABASE... ---")
+        supabase.table("gare").upsert(batch).execute()
+        print("--- ✅ OPERAZIONE COMPLETATA ---")
+    else:
+        print("--- ❌ Nessuna gara trovata. Stampo HTML per capire cosa vede il bot: ---")
+        print(res.text[:500])
 
 if __name__ == "__main__":
-    avvia_scraper_definitivo()
+    avvia()
