@@ -3,45 +3,56 @@ import requests
 from bs4 import BeautifulSoup
 from supabase import create_client
 
-# Configurazione
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 1. Recupero credenziali
+url_sb = os.environ.get("SUPABASE_URL")
+key_sb = os.environ.get("SUPABASE_KEY")
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
+print(f"--- DEBUG: SUPABASE_URL presente: {bool(url_sb)}")
+print(f"--- DEBUG: SUPABASE_KEY presente: {bool(key_sb)}")
 
-def avvia_scarico():
+supabase = create_client(url_sb, key_sb)
+
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0 Safari/537.36'}
+
+def avvia():
+    # TEST: Usiamo l'ID di una gara che sappiamo avere risultati (es. 56789)
     comp_id = "56789" 
-    url_base = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
+    url = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
     
-    print(f"--- ANALISI COMPETIZIONE: {url_base} ---")
-    res = requests.get(url_base, headers=HEADERS)
-    soup = BeautifulSoup(res.text, 'html.parser')
-
-    # Cerchiamo tutti i link (classifiche, ordini di partenza, etc)
-    links = [l['href'] for l in soup.find_all('a', href=True)]
+    print(f"--- 1. TENTATIVO DI CONNESSIONE A: {url}")
     
-    # Filtriamo solo quelli che sembrano classifiche (idGara o link a file)
-    gare_links = list(set([l for l in links if 'idGara=' in l]))
-
-    for g_url in gare_links:
-        full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
-        print(f"\n--- ANALIZZO CATEGORIA: {full_url} ---")
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=30)
+        print(f"--- 2. RISPOSTA SITO FISI: {res.status_code}")
         
-        res_g = requests.get(full_url, headers=HEADERS)
-        g_soup = BeautifulSoup(res_g.text, 'html.parser')
+        soup = BeautifulSoup(res.text, 'html.parser')
         
-        # DEBUG: Stampiamo i primi 500 caratteri della pagina per capire cosa c'è dentro
-        print(f"DEBUG HTML: {res_g.text[:500]}")
+        # Cerchiamo i link idGara
+        links = [l['href'] for l in soup.find_all('a', href=True) if 'idGara=' in l['href']]
+        print(f"--- 3. LINK GARE TROVATI: {len(links)}")
 
-        # Se non c'è tabella, cerchiamo link a PDF o file Excel
-        file_links = [l['href'] for l in g_soup.find_all('a', href=True) if '.pdf' in l['href'].lower()]
-        if file_links:
-            print(f"   📂 Trovata classifica PDF: {file_links[0]}")
-            # Qui servirebbe una libreria per leggere i PDF, ma iniziamo a vedere se li trova
-            continue
+        for g_url in list(set(links)):
+            full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
+            print(f"--- 4. ANALIZZO GARA: {full_url}")
+            
+            res_g = requests.get(full_url, headers=HEADERS)
+            g_soup = BeautifulSoup(res_g.text, 'html.parser')
+            
+            # Cerchiamo la tabella o i link PDF
+            table = g_soup.find('table')
+            if table:
+                print("--- 5. TABELLA TROVATA! Estrazione dati...")
+                # (Logica di estrazione qui...)
+            else:
+                # Se non c'è tabella, cerchiamo il PDF
+                pdf = [l['href'] for l in g_soup.find_all('a', href=True) if '.pdf' in l['href'].lower()]
+                if pdf:
+                    print(f"--- 5. TROVATO PDF: {pdf[0]}")
+                else:
+                    print("--- 5. NESSUN DATO (Tabella o PDF) in questa pagina.")
 
-        # Prova finale: cerchiamo testi che sembrano nomi di società veronesi
-        testo_pagina = g_soup.get_text().upper()
-        if "BOSCO" in testo_pagina or "VALILLASI" in testo_pagina:
-            print("   ✅ Trovati riferimenti a club veronesi nel testo!")
+    except Exception as e:
+        print(f"--- ERRORE DURANTE L'ESECUZIONE: {e}")
+
+if __name__ == "__main__":
+    avvia()
