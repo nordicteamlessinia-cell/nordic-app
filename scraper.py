@@ -3,58 +3,63 @@ import requests
 from bs4 import BeautifulSoup
 from supabase import create_client
 
-# Configurazione
+# 1. Configurazione Supabase
 url_sb = os.environ.get("SUPABASE_URL")
 key_sb = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url_sb, key_sb)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
 
-def avvia():
+def avvia_totale():
     comp_id = "56789"
-    url = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
+    url_comp = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
     
-    print(f"--- 🎯 TARGET: {url} ---")
-    
-    res = requests.get(url, headers=HEADERS, timeout=30)
+    print(f"--- 🎯 FASE 1: Recupero elenco gare da {url_comp} ---")
+    res = requests.get(url_comp, headers=HEADERS)
     soup = BeautifulSoup(res.text, 'html.parser')
     
-    links = soup.find_all('a', href=True)
-    gare_trovate = []
-    
-    for l in links:
-        href = l['href']
-        if 'idGara=' in href:
-            full_url = href if href.startswith('http') else f"https://comitati.fisi.org/veneto/{href}"
-            gare_trovate.append(full_url)
-            
-    print(f"--- 📊 GARE IDENTIFICATE: {len(gare_trovate)} ---")
-    
-    if gare_trovate:
-        batch = []
-        # Prendiamo gli ID unici
-        set_gare = list(set(gare_trovate))
-        
-        for g in set_gare:
-            id_gara = g.split('idGara=')[1].split('&')[0]
-            # Inviamo solo le colonne che siamo SICURI esistano
-            # Se la tua tabella ha nomi diversi, modificali qui sotto
-            batch.append({
-                "id_gara_fisi": id_gara,
-                "gara_nome": f"Gara ID {id_gara}"
-            })
+    # Troviamo i link unici delle gare
+    links = list(set([l['href'] for l in soup.find_all('a', href=True) if 'idGara=' in l['href']]))
+    print(f"--- 📊 Gare trovate: {len(links)} ---")
 
-        print(f"--- 🚀 INVIO A DATABASE (Tabella: Gare) ---")
-        try:
-            # Prova a usare "Gare" (G maiuscola) o "gare" in base al test precedente
-            # Se l'errore prima diceva "Perhaps you meant Gare", usa "Gare"
-            supabase.table("Gare").upsert(batch).execute()
-            print("--- ✅ OPERAZIONE COMPLETATA! Controlla Supabase. ---")
-        except Exception as e:
-            print(f"--- ❌ ERRORE: {e} ---")
-            print("Se l'errore dice ancora 'Could not find column', controlla i nomi delle colonne su Supabase.")
-    else:
-        print("--- ❌ Nessuna gara trovata. ---")
+    for g_url in links:
+        full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
+        id_gara = full_url.split('idGara=')[1].split('&')[0]
+        
+        print(f"\n--- 🔍 FASE 2: Analizzo Classifica Gara {id_gara} ---")
+        
+        res_g = requests.get(full_url, headers=HEADERS)
+        g_soup = BeautifulSoup(res_g.text, 'html.parser')
+        
+        # Cerchiamo la tabella risultati
+        rows = g_soup.find_all('tr')
+        atleti_batch = []
+        
+        for row in rows:
+            cols = row.find_all(['td', 'th'])
+            data = [c.get_text(strip=True) for c in cols]
+            
+            # Se la riga ha una posizione numerica nella prima colonna, è un atleta
+            if len(data) >= 5 and data[0].isdigit():
+                atleti_batch.append({
+                    "id_gara_fisi": id_gara,
+                    "posizione": int(data[0]),
+                    "atleta_nome": data[2],
+                    "societa": data[4]
+                })
+
+        if atleti_batch:
+            print(f"   ✅ Trovati {len(atleti_batch)} atleti. Invio a Supabase...")
+            try:
+                # Assicurati che la tabella su Supabase si chiami 'Gare' 
+                # e abbia le colonne: id_gara_fisi, posizione, atleta_nome, societa
+                supabase.table("Gare").upsert(atleti_batch).execute()
+            except Exception as e:
+                print(f"   ❌ Errore invio: {e}")
+        else:
+            print(f"   ⚠️ Nessun dato trovato nella tabella della gara {id_gara}")
+
+    print("\n--- 🏁 SCRAPER COMPLETATO ---")
 
 if __name__ == "__main__":
-    avvia()
+    avvia_totale()
