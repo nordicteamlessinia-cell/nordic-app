@@ -39,7 +39,7 @@ def get_data():
                 # Invio a Supabase
                 supabase.table("gare").upsert({
                     "id_gara_fisi": id_gara,
-                    "atleta_nome": atleta,
+                    "Atleta": atleta,
                     "societa": soc,
                     "posizione": int(pos) if pos.isdigit() else 0,
                     "gara_id": comp_id
