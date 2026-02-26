@@ -48,7 +48,7 @@ def scarica_singola_competizione(comp_id):
                 pos = cols[0].text.strip()
                 if pos.isdigit():
                     batch.append({
-                        "atleta_nome": cols[2].text.strip(),
+                        "Atleta": cols[2].text.strip(),
                         "societa": cols[4].text.strip(),
                         "posizione": int(pos),
                         "tempo": cols[5].text.strip() if len(cols)>5 else "",
