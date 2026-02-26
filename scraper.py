@@ -3,49 +3,59 @@ import requests
 from supabase import create_client
 
 # 1. Configurazione Supabase
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+url_sb = os.environ.get("SUPABASE_URL")
+key_sb = os.environ.get("SUPABASE_KEY")
+supabase = create_client(url_sb, key_sb)
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Referer': 'https://comitati.fisi.org/veneto/calendario/?d='
+    'X-Requested-With': 'XMLHttpRequest'
 }
 
 def avvia_scraper_serio():
-    # Questo è l'URL segreto che restituisce i dati grezzi del calendario
-    # senza passare per la grafica del sito
-    url_sorgente = "https://comitati.fisi.org/veneto/wp-admin/admin-ajax.php?action=get_gare_calendario&d="
+    # Aggiungiamo il parametro della stagione (es. 2024 per 2023/24 o 2025)
+    # Il sito FISI spesso vuole sapere l'anno specifico
+    url_sorgente = "https://comitati.fisi.org/veneto/wp-admin/admin-ajax.php"
+    params = {
+        'action': 'get_gare_calendario',
+        'd': '2025' # Prova con 2024 se non vedi risultati
+    }
 
-    print(f"--- 🚀 ACCESSO DIRETTO AI DATI: {url_sorgente} ---")
+    print(f"--- 🚀 TENTATIVO DI ACCESSO AI DATI 2025 ---")
     
     try:
-        res = requests.get(url_sorgente, headers=HEADERS, timeout=30)
+        res = requests.get(url_sorgente, params=params, headers=HEADERS, timeout=30)
         
-        # Il sito restituisce un formato JSON (una lista di dati)
+        # Verifichiamo cosa ci ha risposto davvero il server
+        print(f"DEBUG RISPOSTA: {res.text[:100]}")
+        
+        # Se la risposta è '0' o un numero, il sito ci sta rimbalzando
+        if res.text.strip() == '0' or not res.text.strip():
+            print("--- ❌ Il server ha risposto '0'. Parametri errati o sessione scaduta. ---")
+            return
+
         gare_json = res.json()
         
-        print(f"--- 📦 GARE RICEVUTE: {len(gare_json)} ---")
+        # Controllo di sicurezza: verifichiamo se è una lista
+        if isinstance(gare_json, list):
+            print(f"--- 📦 GARE RICEVUTE: {len(gare_json)} ---")
+            
+            batch_gare = []
+            for gara in gare_json:
+                if isinstance(gara, dict):
+                    batch_gare.append({
+                        "id_gara_fisi": str(gara.get('idComp', '')),
+                        "gara_nome": gara.get('titolo_gara', 'Gara senza nome'),
+                        "localita": gara.get('localita', ''),
+                        "data": gara.get('data_gara', ''),
+                        "societa": gara.get('societa_organizzatrice', '')
+                    })
 
-        batch_gare = []
-        for gara in gare_json:
-            # Estraiamo i dati utili dal JSON
-            # Nota: i nomi dei campi nel JSON spesso sono diversi (es. 'id', 'titolo', 'data')
-            if 'idComp' in gara:
-                batch_gare.append({
-                    "id_gara_fisi": str(gara.get('idComp')),
-                    "gara_nome": gara.get('titolo_gara') or gara.get('nome'),
-                    "localita": gara.get('localita'),
-                    "data": gara.get('data_gara'),
-                    "societa": gara.get('societa_organizzatrice')
-                })
-
-        if batch_gare:
-            print(f"--- ✅ INVIO {len(batch_gare)} GARE A SUPABASE ---")
-            supabase.table("gare").upsert(batch_gare).execute()
+            if batch_gare:
+                print(f"--- ✅ INVIO {len(batch_gare)} GARE A SUPABASE ---")
+                supabase.table("gare").upsert(batch_gare).execute()
         else:
-            print("--- ❌ Nessun dato trovato nel JSON. Verifico il contenuto... ---")
-            print(f"DEBUG JSON: {str(gare_json)[:200]}")
+            print(f"--- ⚠️ Formato inaspettato: {type(gare_json)} ---")
 
     except Exception as e:
         print(f"--- 🔥 ERRORE: {e} ---")
