@@ -1,6 +1,5 @@
 import os
 import requests
-import re
 from bs4 import BeautifulSoup
 from supabase import create_client
 
@@ -9,7 +8,7 @@ url_sb = os.environ.get("SUPABASE_URL")
 key_sb = os.environ.get("SUPABASE_KEY")
 supabase = create_client(url_sb, key_sb)
 
-# Header per simulare un browser umano ed evitare blocchi
+# Header per simulare un browser umano
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'X-Requested-With': 'XMLHttpRequest'
@@ -36,7 +35,7 @@ def avvia_scraper_completo():
             
             print(f"\n--- 🔍 FASE 2: Estrazione Classifica Gara {id_gara} ---")
             
-            # Chiamata AJAX diretta alla classifica per bypassare il caricamento dinamico
+            # Chiamata AJAX diretta alla classifica
             url_dati = f"https://comitati.fisi.org/veneto/wp-admin/admin-ajax.php?action=get_classifica&idGara={id_gara}"
             
             res_dati = requests.get(url_dati, headers=HEADERS, timeout=30)
@@ -54,12 +53,24 @@ def avvia_scraper_completo():
                     atleti_batch.append({
                         "id_gara_fisi": id_gara,
                         "posizione": int(data[0]),
-                        "atleta_nome": data[2], # Nome Atleta
-                        "societa": data[4]      # Nome Società
+                        "atleta_nome": data[2],
+                        "societa": data[4]
                     })
 
             if atleti_batch:
                 print(f"   ✅ Trovati {len(atleti_batch)} atleti. Invio a Supabase...")
                 try:
-                    # NOTA: La tabella deve chiamarsi 'Gare' (G maiuscola) 
-                    # e
+                    # Upsert sulla tabella 'Gare'
+                    supabase.table("Gare").upsert(atleti_batch).execute()
+                except Exception as e:
+                    print(f"   ❌ Errore Database: {e}")
+            else:
+                print(f"   ⚠️ Nessuna tabella atleti trovata per la gara {id_gara}")
+
+        print("\n--- 🏁 OPERAZIONE COMPLETATA ---")
+
+    except Exception as e:
+        print(f"--- 🔥 ERRORE GENERALE: {e} ---")
+
+if __name__ == "__main__":
+    avvia_scraper_completo()
