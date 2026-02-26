@@ -13,7 +13,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Header per simulare un browser ed evitare blocchi dal sito FISI
+# Header per simulare un browser ed evitare blocchi
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
@@ -29,18 +29,13 @@ def avvia_scarico():
         res = requests.get(url_competizione, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # Cerchiamo i link alle singole classifiche (idGara)
+        # Cerchiamo i link alle singole classifiche
         links = [l['href'] for l in soup.find_all('a', href=True) if 'idGara=' in l['href']]
-        links = list(set(links)) # Rimuove i duplicati
+        links = list(set(links))
         
-        print(f"--- 2. Gare (classifiche) trovate: {len(links)} ---")
-
-        if not links:
-            print("❌ Nessuna gara trovata. Verifica l'ID competizione o la struttura del sito.")
-            return
+        print(f"--- 2. Gare trovate: {len(links)} ---")
 
         for g_url in links:
-            # Gestione URL parziali/completi
             full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
             id_fisi = full_url.split('idGara=')[1].split('&')[0]
             
@@ -48,10 +43,7 @@ def avvia_scarico():
             res_g = requests.get(full_url, headers=HEADERS, timeout=20)
             g_soup = BeautifulSoup(res_g.text, 'html.parser')
             
-            # Titolo della gara (es. U14 Ragazzi)
             titolo_gara = g_soup.find('h1').text.strip() if g_soup.find('h1') else "Gara Veneto"
-
-            # Cerchiamo le righe della tabella risultati
             rows = g_soup.find_all('tr')
             batch_atleti = []
 
@@ -59,12 +51,37 @@ def avvia_scarico():
                 cols = row.find_all(['td', 'th'])
                 data = [c.get_text(strip=True) for c in cols]
                 
-                # Debug: stampa le righe per vedere la struttura nei log di GitHub
                 if len(data) > 3:
+                    # Log per debug: vediamo la struttura nel log di GitHub
                     print(f"   Dati riga: {data}")
 
-                # La riga è valida se la prima o seconda colonna è un numero (Posizione)
-                pos = None
-                for potential_pos in data[:2]:
-                    if potential_pos.isdigit():
-                        pos =
+                    # Cerchiamo la posizione nelle prime due colonne
+                    pos = None
+                    for potential_pos in data[:2]:
+                        if potential_pos.isdigit():
+                            pos = int(potential_pos)
+                            break
+                    
+                    # Se troviamo la posizione e i dati minimi, aggiungiamo al batch
+                    if pos is not None and len(data) >= 5:
+                        batch_atleti.append({
+                            "atleta_nome": data[2],
+                            "societa": data[4],
+                            "posizione": pos,
+                            "tempo": data[5] if len(data) > 5 else "",
+                            "categoria": titolo_gara,
+                            "id_gara_fisi": id_fisi,
+                            "comp_id": comp_id
+                        })
+
+            if batch_atleti:
+                print(f"   ✅ Invio {len(batch_atleti)} atleti a Supabase...")
+                supabase.table("gare").upsert(batch_atleti).execute()
+            else:
+                print("   ⚠ Nessun dato estratto da questa tabella.")
+
+    except Exception as e:
+        print(f"❌ ERRORE GENERALE: {e}")
+
+if __name__ == "__main__":
+    avvia_scarico()
