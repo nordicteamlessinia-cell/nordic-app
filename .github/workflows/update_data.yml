@@ -1,0 +1,23 @@
+name: Update Nordic Data
+on:
+  workflow_dispatch: # Permette di lanciarlo a mano con un tasto
+  schedule:
+    - cron: '0 18 * * *' # Gira automaticamente ogni giorno alle 18:00
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codice
+        uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install librerie
+        run: pip install requests beautifulsoup4 supabase
+      - name: Esegui Scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scraper.py
