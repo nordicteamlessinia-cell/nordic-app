@@ -1,57 +1,63 @@
-def scarica_test():
+import os
+import requests
+from bs4 import BeautifulSoup
+from supabase import create_client
+
+# Configurazione con check immediato
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY")
+supabase = create_client(url, key)
+
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
+
+def avvia_scraper():
+    print("--- 1. Inizio Scraper ---")
+    # Usiamo l'ID che abbiamo visto prima (Campionati Regionali Bosco)
     comp_id = "56789" 
-    url_base = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
+    url_fisi = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
     
-    print(f"--- Analisi Competizione: {url_base} ---")
-    res = requests.get(url_base)
+    print(f"--- 2. Cerco gare su: {url_fisi}")
+    res = requests.get(url_fisi, headers=HEADERS)
     soup = BeautifulSoup(res.text, 'html.parser')
-
-    # Cerchiamo tutti i link che portano a una singola gara
+    
+    # Cerchiamo i link idGara
     links = [l['href'] for l in soup.find_all('a', href=True) if 'idGara=' in l['href']]
-    links = list(set(links)) # Rimuove i duplicati
-
-    if not links:
-        print("⚠ ATTENZIONE: Nessun link gara (idGara) trovato. Verificare l'ID competizione.")
+    links = list(set(links))
+    
+    print(f"--- 3. Gare trovate: {len(links)}")
+    
+    if len(links) == 0:
+        print("❌ Nessun link gara trovato. Probabile cambio struttura sito FISI.")
+        # Debug: stampiamo un pezzetto di HTML per capire cosa vede il bot
+        print(res.text[:500]) 
         return
 
     for g_url in links:
-        # Assicuriamoci che l'URL sia completo
-        full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
-        print(f"-> Entro nella gara: {full_url}")
-        
-        res_g = requests.get(full_url)
+        print(f"--- 4. Analizzo gara: {g_url}")
+        res_g = requests.get(g_url, headers=HEADERS)
         g_soup = BeautifulSoup(res_g.text, 'html.parser')
         
-        # Cerchiamo TUTTE le tabelle presenti
-        tables = g_soup.find_all('table')
-        if not tables:
-            print(f"   ❌ Nessuna tabella trovata in questa pagina.")
+        table = g_soup.find('table')
+        if not table:
+            print("   ❌ Tabella non trovata in questa pagina.")
             continue
+            
+        rows = table.find_all('tr')[1:] # Salta intestazione
+        atleti = []
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) >= 5:
+                atleti.append({
+                    "atleta_nome": cols[2].text.strip(),
+                    "societa": cols[4].text.strip(),
+                    "posizione": int(cols[0].text.strip()) if cols[0].text.strip().isdigit() else 0,
+                    "id_gara_fisi": g_url.split('idGara=')[1].split('&')[0]
+                })
+        
+        if atleti:
+            print(f"   ✅ Trovati {len(atleti)} atleti. Provo a inviare a Supabase...")
+            result = supabase.table("gare").upsert(atleti).execute()
+            print(f"   🚀 Risposta Database: {result}")
 
-        for table in tables:
-            rows = table.find_all('tr')
-            batch = []
-            print(f"   Trovate {len(rows)} righe. Analizzo...")
-
-            for row in rows:
-                cols = row.find_all(['td', 'th'])
-                # Puliamo i dati da spazi e caratteri strani
-                data = [c.get_text(strip=True) for c in cols]
-                
-                # Una riga valida di solito ha la posizione come primo elemento (numero)
-                if len(data) >= 5 and data[0].isdigit():
-                    batch.append({
-                        "posizione": int(data[0]),
-                        "atleta_nome": data[2], # Di solito la terza colonna
-                        "societa": data[4],     # Di solito la quinta colonna
-                        "id_gara_fisi": full_url.split('idGara=')[1].split('&')[0],
-                        "gara_nome": g_soup.find('h1').text.strip() if g_soup.find('h1') else "Gara"
-                    })
-
-            if batch:
-                print(f"   ✅ Trovati {len(batch)} atleti. Invio a Supabase...")
-                try:
-                    supabase.table("gare").upsert(batch).execute()
-                    print(f"   🚀 Inserimento completato per questa tabella.")
-                except Exception as e:
-                    print(f"   🔥 Errore Supabase: {e}")
+if __name__ == "__main__":
+    avvia_scraper()
