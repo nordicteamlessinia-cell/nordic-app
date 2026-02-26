@@ -47,28 +47,35 @@ def avvia_scarico():
             rows = g_soup.find_all('tr')
             batch_atleti = []
 
-            for row in rows:
+           for row in rows:
                 cols = row.find_all(['td', 'th'])
                 data = [c.get_text(strip=True) for c in cols]
                 
-                if len(data) > 3:
-                    # Log per debug: vediamo la struttura nel log di GitHub
-                    print(f"   Dati riga: {data}")
+                if len(data) >= 4:
+                    # Stampiamo sempre per debug nei log di GitHub
+                    print(f"   Analizzo riga: {data}")
 
-                    # Cerchiamo la posizione nelle prime due colonne
+                    # Identifichiamo la posizione (di solito la prima colonna che è un numero)
                     pos = None
-                    for potential_pos in data[:2]:
-                        if potential_pos.isdigit():
-                            pos = int(potential_pos)
+                    atleta_nome = ""
+                    societa = ""
+
+                    for i, valore in enumerate(data):
+                        if valore.isdigit() and pos is None:
+                            pos = int(valore)
+                            # Una volta trovata la posizione, l'atleta è quasi sempre 2 o 3 colonne dopo
+                            if i + 2 < len(data):
+                                atleta_nome = data[i + 2]
+                            if i + 4 < len(data):
+                                societa = data[i + 4]
                             break
                     
-                    # Se troviamo la posizione e i dati minimi, aggiungiamo al batch
-                    if pos is not None and len(data) >= 5:
+                    if pos and atleta_nome:
                         batch_atleti.append({
-                            "atleta_nome": data[2],
-                            "societa": data[4],
+                            "atleta_nome": atleta_nome,
+                            "societa": societa,
                             "posizione": pos,
-                            "tempo": data[5] if len(data) > 5 else "",
+                            "tempo": data[-1] if len(data) > 5 else "",
                             "categoria": titolo_gara,
                             "id_gara_fisi": id_fisi,
                             "comp_id": comp_id
