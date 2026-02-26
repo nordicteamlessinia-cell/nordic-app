@@ -53,7 +53,7 @@ def scarica_classifiche():
                 if pos.isdigit():
                     dati_da_inserire.append({
                         "id_gara_fisi": id_gara,
-                        "Atleta": Atleta,
+                        "Atleta": atleta,
                         "societa": societa,
                         "posizione": int(pos),
                         "tempo": tempo,
