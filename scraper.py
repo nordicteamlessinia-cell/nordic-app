@@ -48,7 +48,7 @@ def avvia():
 
         # Invio a Supabase
         print(f"--- 🚀 INVIO A DATABASE... ---")
-        supabase.table("Gare").upsert(batch).execute()
+        supabase.table("gare").upsert(batch).execute()
         print("--- ✅ OPERAZIONE COMPLETATA ---")
     else:
         print("--- ❌ Nessuna gara trovata. Stampo HTML per capire cosa vede il bot: ---")
