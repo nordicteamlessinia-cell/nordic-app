@@ -1,69 +1,66 @@
 import os
+import time
+import hashlib
 import requests
-import json
-from supabase import create_client
+from bs4 import BeautifulSoup
+from supabase import create_client, Client
 
-# 1. Configurazione Supabase
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# ---------------------------------------------------------
+# CONFIGURAZIONE SUPABASE
+# ---------------------------------------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://YOUR_PROJECT.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SERVICE_ROLE_KEY")
 
-# 2. Configurazione API FISI Veneto
-# L'azione corretta per il calendario è 'get_gare_calendario'
-API_URL = "https://comitati.fisi.org/veneto/wp-admin/admin-ajax.php"
-PARAMS = {
-    'action': 'get_gare_calendario',
-    'd': '2025'  # Stagione 2024/2025
-}
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Referer': 'https://comitati.fisi.org/veneto/calendario/'
-}
+CALENDAR_URL = "https://comitati.fisi.org/veneto/calendario/"
 
-def indagine_api():
-    print(f"--- 🚀 CHIAMATA API DIRETTA: {API_URL} ---")
-    
-    try:
-        # Effettuiamo la richiesta POST (spesso admin-ajax preferisce POST)
-        response = requests.post(API_URL, data=PARAMS, headers=HEADERS, timeout=30)
-        
-        # Se la risposta è '0', WordPress non ha riconosciuto l'azione
-        if response.text == '0':
-            print("--- ❌ Errore: Il server ha risposto '0'. L'azione API potrebbe essere diversa. ---")
-            return
 
-        # Proviamo a decodificare il JSON
-        try:
-            gare = response.json()
-        except Exception:
-            print(f"--- ⚠️ Risposta non JSON. Anteprima: {response.text[:200]} ---")
-            return
+# ---------------------------------------------------------
+# CREA HASH EVENTO PER EVITARE DUPLICATI
+# ---------------------------------------------------------
+def hash_event(e):
+    raw = f"{e['date']}-{e['location']}-{e['race']}-{e['category']}-{e.get('link', '')}"
+    return hashlib.md5(raw.encode()).hexdigest()
 
-        print(f"--- ✅ DATI RICEVUTI: {len(gare)} elementi trovati ---")
 
-        batch_gare = []
-        for g in gare:
-            # Mappiamo i campi del JSON ai campi della tua tabella Supabase
-            # Nota: idComp è l'ID della competizione generale
-            if g.get('idComp'):
-                batch_gare.append({
-                    "id_gara_fisi": str(g.get('idComp')),
-                    "gara_nome": g.get('titolo_gara', 'N.D.'),
-                    "localita": g.get('localita', 'N.D.'),
-                    "data": g.get('data_gara', 'N.D.'),
-                    "societa": g.get('societa_organizzatrice', 'N.D.')
-                })
+# ---------------------------------------------------------
+# SCARICA PAGINA CALENDARIO
+# ---------------------------------------------------------
+def fetch_calendar_page():
+    r = requests.get(CALENDAR_URL)
+    r.raise_for_status()
+    return r.text
 
-        if batch_gare:
-            print(f"--- 💾 INVIO A SUPABASE: {len(batch_gare)} gare ---")
-            # Assicurati che la tabella si chiami 'Gare' (o 'gare')
-            supabase.table("Gare").upsert(batch_gare).execute()
-            print("--- 🏁 OPERAZIONE COMPLETATA CON SUCCESSO ---")
 
-    except Exception as e:
-        print(f"--- 🔥 ERRORE CRITICO: {e} ---")
+# ---------------------------------------------------------
+# PARSE DEL CALENDARIO (lista eventi)
+# ---------------------------------------------------------
+def parse_calendar(html):
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select("table tbody tr")
+    events = []
 
-if __name__ == "__main__":
-    indagine_api()
+    for row in rows:
+        cols = row.find_all("td")
+        if len(cols) < 5:
+            continue
+
+        date = cols[0].get_text(strip=True)
+        location = cols[1].get_text(strip=True)
+        race = cols[2].get_text(strip=True)
+        category = cols[3].get_text(strip=True)
+
+        link_tag = cols[4].find("a")
+        link = link_tag["href"] if link_tag else None
+
+        event = {
+            "date": date,
+            "location": location,
+            "race": race,
+            "category": category,
+            "link": link,
+            "event_hash": hash_event({
+                "date": date,
+                "location": location,
+                "
