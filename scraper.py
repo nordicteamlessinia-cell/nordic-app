@@ -1,125 +1,67 @@
 import os
-import time
-import hashlib
 import requests
-from bs4 import BeautifulSoup
-from supabase import create_client, Client
+from supabase import create_client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+# 1. Configurazione Supabase
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 2. Configurazione API FISI
+BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-CALENDAR_URL = "https://comitati.fisi.org/veneto/calendario/"
+def avvia_estrazione():
+    params = {
+        "action": "competizioni_get_all",
+        "offset": 0,
+        "limit": 100,
+        "url": "https://comitati.fisi.org/veneto/calendario/",
+        "idStagione": "2025",
+        "disciplina": "",
+        "dataInizio": "01/06/2025",
+        "dataFine": "30/05/2026"
+    }
 
-def hash_event(e):
-    raw = f"{e['date']}-{e['location']}-{e['race']}-{e['category']}-{e.get('link', '')}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    all_gare = []
+    print("--- 🚀 INIZIO DOWNLOAD DALLE API FISI ---")
 
-def fetch_calendar_page():
-    r = requests.get(CALENDAR_URL)
-    r.raise_for_status()
-    return r.text
+    while True:
+        try:
+            r = requests.get(BASE_URL, params=params, timeout=30)
+            data = r.json()
 
-def parse_calendar(html):
-    soup = BeautifulSoup(html, "html.parser")
+            if not data or len(data) == 0:
+                break
 
-    # debug
-    with open("debug_calendar.html", "w") as f:
-        f.write(html)
+            for item in data:
+                # Mappiamo i dati dell'API alle colonne della tua tabella Supabase
+                # Verifica che i nomi delle colonne (a sinistra) siano quelli nel tuo DB
+                all_gare.append({
+                    "id_gara_fisi": str(item.get("idComp")),
+                    "gara_nome": item.get("titolo"),
+                    "localita": item.get("localita"),
+                    "data": item.get("dataFine"), # o dataInizio
+                    "societa": item.get("societa_desc")
+                })
 
-    rows = soup.find_all("tr")     # selector più robusto
-    events = []
+            params["offset"] += params["limit"]
+            print(f"Scaricati {len(all_gare)} record...")
 
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) < 5:
-            continue
+        except Exception as e:
+            print(f"--- ❌ Errore durante la chiamata: {e} ---")
+            break
 
-        event = {
-            "date": cols[0].get_text(strip=True),
-            "location": cols[1].get_text(strip=True),
-            "race": cols[2].get_text(strip=True),
-            "category": cols[3].get_text(strip=True),
-            "link": cols[4].find("a")["href"] if cols[4].find("a") else None
-        }
-
-        event["event_hash"] = hash_event(event)
-        events.append(event)
-
-    return events
-
-def fetch_race_page(url):
-    if not url:
-        return None
-    try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        return r.text
-    except:
-        return None
-
-def parse_results(html):
-    if not html:
-        return []
-
-    soup = BeautifulSoup(html, "html.parser")
-    rows = soup.find_all("tr")
-    results = []
-
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) < 3:
-            continue
-
-        results.append({
-            "athlete": cols[0].get_text(strip=True),
-            "team": cols[1].get_text(strip=True),
-            "time": cols[2].get_text(strip=True)
-        })
-
-    return results
-
-def insert_event(event):
-    existing = supabase.table("sci_eventi") \
-        .select("*") \
-        .eq("event_hash", event["event_hash"]) \
-        .execute()
-
-    if existing.data:
-        return existing.data[0]["id"]
-
-    res = supabase.table("sci_eventi").insert(event).execute()
-    return res.data[0]["id"]
-
-def insert_results(event_id, results):
-    for r in results:
-        r["event_id"] = event_id
-        supabase.table("sci_risultati").insert(r).execute()
-
-def main():
-    print("SUPABASE_URL:", SUPABASE_URL)
-    print("SUPABASE_KEY PRESENTE:", SUPABASE_KEY is not None)
-
-    html = fetch_calendar_page()
-    events = parse_calendar(html)
-
-    print("EVENTI TROVATI:", len(events))
-
-    for evt in events:
-        print("Evento:", evt["date"], evt["race"])
-
-        event_id = insert_event(evt)
-
-        if evt["link"]:
-            race_html = fetch_race_page(evt["link"])
-            results = parse_results(race_html)
-
-            if results:
-                insert_results(event_id, results)
-                print("  Risultati inseriti:", len(results))
-
-        time.sleep(1)
+    # 3. Invio a Supabase in blocco
+    if all_gare:
+        print(f"--- 💾 INVIO {len(all_gare)} RECORD A SUPABASE ---")
+        try:
+            # Assicurati che la tabella si chiami 'Gare'
+            supabase.table("Gare").upsert(all_gare).execute()
+            print("--- ✅ OPERAZIONE COMPLETATA CON SUCCESSO ---")
+        except Exception as e:
+            print(f"--- ❌ ERRORE DATABASE: {e} ---")
+    else:
+        print("--- ⚠️ Nessun dato trovato per i parametri impostati ---")
 
 if __name__ == "__main__":
-    main()
+    avvia_estrazione()
