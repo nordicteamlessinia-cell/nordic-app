@@ -1,0 +1,14 @@
+  - name: Set up Python
+    uses: actions/setup-python@v4
+    with:
+      python-version: "3.11"
+
+  - name: Install dependencies
+    run: pip install -r requirements.txt
+
+  - name: Run scraper
+    env:
+      SUPABASE_URL: ${{   https://eugxmffgcstifbswgynz.supabase.co
+ }}
+      SUPABASE_KEY: ${{ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1Z3htZmZnY3N0aWZic3dneW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwNzc4MTIsImV4cCI6MjA4NzY1MzgxMn0.6u_nVapcX3WkaNw9eZgQGhokqQijuSCaq5DxNe-tU0U }}
+    run: python scraper.py
