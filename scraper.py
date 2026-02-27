@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from supabase import create_client, Client
 
 # ---------------------------------------------------------
-# CONFIGURAZIONE SUPABASE
+# CONFIG SUPABASE
 # ---------------------------------------------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://YOUR_PROJECT.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SERVICE_ROLE_KEY")
@@ -17,7 +17,7 @@ CALENDAR_URL = "https://comitati.fisi.org/veneto/calendario/"
 
 
 # ---------------------------------------------------------
-# CREA HASH EVENTO PER EVITARE DUPLICATI
+# HASH EVENTO PER EVITARE DUPLICATI
 # ---------------------------------------------------------
 def hash_event(e):
     raw = f"{e['date']}-{e['location']}-{e['race']}-{e['category']}-{e.get('link', '')}"
@@ -34,7 +34,7 @@ def fetch_calendar_page():
 
 
 # ---------------------------------------------------------
-# PARSE DEL CALENDARIO (lista eventi)
+# PARSE CALENDARIO
 # ---------------------------------------------------------
 def parse_calendar(html):
     soup = BeautifulSoup(html, "html.parser")
@@ -49,18 +49,4 @@ def parse_calendar(html):
         date = cols[0].get_text(strip=True)
         location = cols[1].get_text(strip=True)
         race = cols[2].get_text(strip=True)
-        category = cols[3].get_text(strip=True)
-
-        link_tag = cols[4].find("a")
-        link = link_tag["href"] if link_tag else None
-
-        event = {
-            "date": date,
-            "location": location,
-            "race": race,
-            "category": category,
-            "link": link,
-            "event_hash": hash_event({
-                "date": date,
-                "location": location,
-                "
+        category
