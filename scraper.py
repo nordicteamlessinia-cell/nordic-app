@@ -1,51 +1,69 @@
 import os
 import requests
-from bs4 import BeautifulSoup
+import json
 from supabase import create_client
 
-# Configurazione standard
-url_sb = os.environ.get("SUPABASE_URL")
-key_sb = os.environ.get("SUPABASE_KEY")
-supabase = create_client(url_sb, key_sb)
+# 1. Configurazione Supabase
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+# 2. Configurazione API FISI Veneto
+# L'azione corretta per il calendario è 'get_gare_calendario'
+API_URL = "https://comitati.fisi.org/veneto/wp-admin/admin-ajax.php"
+PARAMS = {
+    'action': 'get_gare_calendario',
+    'd': '2025'  # Stagione 2024/2025
+}
 
-def avvia():
-    # 1. Ripartiamo dalla pagina che funzionava (ID Competizione)
-    comp_id = "56789"
-    url_target = f"https://comitati.fisi.org/veneto/competizione/?idComp={comp_id}&d="
-    
-    print(f"--- 🎯 RIPARTIAMO DA: {url_target} ---")
-    
-    res = requests.get(url_target, headers=HEADERS)
-    soup = BeautifulSoup(res.text, 'html.parser')
-    
-    # Recuperiamo i link delle 12 gare (questo funzionava!)
-    links = list(set([l['href'] for l in soup.find_all('a', href=True) if 'idGara=' in l['href']]))
-    print(f"--- 📊 GARE TROVATE: {len(links)} ---")
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Referer': 'https://comitati.fisi.org/veneto/calendario/'
+}
 
-    for g_url in links[:2]: # Proviamo solo le prime 2 per non fare confusione
-        full_url = g_url if g_url.startswith('http') else f"https://comitati.fisi.org/veneto/{g_url}"
-        print(f"\n--- 🔍 ISPEZIONE GARA: {full_url} ---")
+def indagine_api():
+    print(f"--- 🚀 CHIAMATA API DIRETTA: {API_URL} ---")
+    
+    try:
+        # Effettuiamo la richiesta POST (spesso admin-ajax preferisce POST)
+        response = requests.post(API_URL, data=PARAMS, headers=HEADERS, timeout=30)
         
-        res_g = requests.get(full_url, headers=HEADERS)
-        g_soup = BeautifulSoup(res_g.text, 'html.parser')
-        
-        # PROVA A: Cerca tabelle standard
-        table = g_soup.find('table')
-        if table:
-            print("   ✅ TABELLA TROVATA! Provo a leggere le righe...")
-            # ... logica estrazione ...
-        else:
-            # PROVA B: Se non c'è tabella, stampa il TESTO della pagina
-            # Questo ci dirà se i nomi sono lì ma non in una tabella
-            testo_pulito = g_soup.get_text(separator=' ', strip=True)
-            print(f"   📄 ANTEPRIMA TESTO PAGINA: {testo_pulito[:300]}...")
-            
-            # PROVA C: Cerca link a PDF (MOLTO PROBABILE)
-            pdf = [l['href'] for l in g_soup.find_all('a', href=True) if '.pdf' in l['href'].lower()]
-            if pdf:
-                print(f"   🎯 TROVATO PDF CLASSIFICA: {pdf[0]}")
+        # Se la risposta è '0', WordPress non ha riconosciuto l'azione
+        if response.text == '0':
+            print("--- ❌ Errore: Il server ha risposto '0'. L'azione API potrebbe essere diversa. ---")
+            return
+
+        # Proviamo a decodificare il JSON
+        try:
+            gare = response.json()
+        except Exception:
+            print(f"--- ⚠️ Risposta non JSON. Anteprima: {response.text[:200]} ---")
+            return
+
+        print(f"--- ✅ DATI RICEVUTI: {len(gare)} elementi trovati ---")
+
+        batch_gare = []
+        for g in gare:
+            # Mappiamo i campi del JSON ai campi della tua tabella Supabase
+            # Nota: idComp è l'ID della competizione generale
+            if g.get('idComp'):
+                batch_gare.append({
+                    "id_gara_fisi": str(g.get('idComp')),
+                    "gara_nome": g.get('titolo_gara', 'N.D.'),
+                    "localita": g.get('localita', 'N.D.'),
+                    "data": g.get('data_gara', 'N.D.'),
+                    "societa": g.get('societa_organizzatrice', 'N.D.')
+                })
+
+        if batch_gare:
+            print(f"--- 💾 INVIO A SUPABASE: {len(batch_gare)} gare ---")
+            # Assicurati che la tabella si chiami 'Gare' (o 'gare')
+            supabase.table("Gare").upsert(batch_gare).execute()
+            print("--- 🏁 OPERAZIONE COMPLETATA CON SUCCESSO ---")
+
+    except Exception as e:
+        print(f"--- 🔥 ERRORE CRITICO: {e} ---")
 
 if __name__ == "__main__":
-    avvia()
+    indagine_api()
