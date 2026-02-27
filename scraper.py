@@ -2,50 +2,50 @@ import os
 import requests
 from supabase import create_client
 
+# Configurazione
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-def avvia_estrazione():
-    params = {
-        "action": "competizioni_get_all",
-        "offset": 0,
-        "limit": 100,
-        "url": "https://comitati.fisi.org/veneto/calendario/",
-        "idStagione": "2025",
-        "disciplina": "",
-        "dataInizio": "01/06/2025",
-        "dataFine": "30/05/2026"
-    }
+def scarica_risultati_atleti():
+    # 1. Prendiamo le gare da Supabase per sapere quali ID scansionare
+    print("--- 📚 RECUPERO ELENCO GARE DA DATABASE ---")
+    gare_db = supabase.table("Gare").select("id_gara_fisi").execute()
+    lista_id = [g['id_gara_fisi'] for g in gare_db.data]
 
-    all_gare = []
-    print("--- 🚀 INIZIO DOWNLOAD API ---")
+    print(f"--- 🚀 INIZIO SCANSIONE DI {len(lista_id)} GARE ---")
 
-    while True:
-        r = requests.get(BASE_URL, params=params)
-        data = r.json()
-        if not data: break
-
-        for item in data:
-            all_gare.append({
-                "id_gara_fisi": str(item.get("idComp")),
-                "gara_nome": item.get("titolo"),
-                "localita": item.get("localita"),
-                "societa": item.get("societa_desc")
-                # Ho rimosso "data" per evitare l'errore PGRST204
-            })
-        params["offset"] += params["limit"]
-        print(f"Scaricati {len(all_gare)} record...")
-
-    if all_gare:
-        print(f"--- 💾 INVIO {len(all_gare)} RECORD A SUPABASE ---")
+    for id_gara in lista_id:
+        params = {
+            "action": "classifica_get",
+            "idComp": id_gara
+        }
+        
         try:
-            supabase.table("Gare").upsert(all_gare).execute()
-            print("--- ✅ SUCCESSO TOTALE! ---")
+            r = requests.get(BASE_URL, params=params, timeout=20)
+            classifica = r.json()
+
+            if not classifica or 'error' in classifica:
+                continue
+
+            batch_risultati = []
+            # L'API classifica_get solitamente restituisce una lista di atleti
+            for riga in classifica:
+                batch_risultati.append({
+                    "id_gara_fisi": id_gara,
+                    "atleta_nome": riga.get("atleta_nome") or riga.get("nominativo"),
+                    "posizione": riga.get("posizione"),
+                    "societa": riga.get("societa_desc")
+                })
+
+            if batch_risultati:
+                print(f"   ✅ Gara {id_gara}: Salvataggio {len(batch_risultati)} atleti...")
+                supabase.table("Risultati").upsert(batch_risultati).execute()
+
         except Exception as e:
-            print(f"--- ❌ ERRORE: {e} ---")
+            print(f"   ❌ Errore nella gara {id_gara}: {e}")
 
 if __name__ == "__main__":
-    avvia_estrazione()
+    scarica_risultati_atleti()
