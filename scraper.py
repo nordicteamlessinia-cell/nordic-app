@@ -1,89 +1,40 @@
-import os
 import requests
-import time
 from bs4 import BeautifulSoup
-from supabase import create_client
+import re
 
-# Configurazione
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+def indagine_raggi_x():
+    url_test = "https://comitati.fisi.org/veneto/gara/?idGara=16284864&idComp=54457&d=2025"
+    HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
+    print(f"--- 🔦 INDAGINE PROFONDA SULLA GARA 16284864 ---")
+    res = requests.get(url_test, headers=HEADERS, timeout=15)
+    soup = BeautifulSoup(res.text, 'html.parser')
 
-def master_spider_atleti():
-    print("--- 📂 Lettura competizioni dal database... ---")
-    gare_db = supabase.table("Gare").select("id_gara_fisi").execute()
-    id_competizioni = [g['id_gara_fisi'] for g in gare_db.data]
-    
-    print(f"--- 🕷️ Inizio scansione su {len(id_competizioni)} competizioni ---")
+    # 1. Cerchiamo file PDF
+    pdf_links = [a['href'] for a in soup.find_all('a', href=True) if '.pdf' in a['href'].lower()]
+    if pdf_links:
+        print(f"\n📄 TROVATI {len(pdf_links)} PDF! Le classifiche sono documenti:")
+        for p in pdf_links:
+            print(f"   -> {p}")
 
-    for id_comp in id_competizioni:
-        if not id_comp or str(id_comp) == "None":
-            continue
+    # 2. Cerchiamo chiamate AJAX nascoste nel JavaScript
+    scripts = soup.find_all('script')
+    trovato_ajax = False
+    for script in scripts:
+        if script.string and ('admin-ajax.php' in script.string or 'action' in script.string):
+            # Cerchiamo l'azione esatta
+            action = re.search(r"action\s*:\s*['\"]([^'\"]+)['\"]", script.string)
+            if action:
+                print(f"\n🕵️‍♂️ TROVATO SCRIPT AJAX NASCOSTO!")
+                print(f"   🎯 LA VERA AZIONE API È: {action.group(1)}")
+                trovato_ajax = True
 
-        url_comp = f"https://comitati.fisi.org/veneto/competizione/?idComp={id_comp}&d=2025"
-        
-        try:
-            res = requests.get(url_comp, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            links = soup.find_all('a', href=True)
-            
-            id_sottogare = []
-            for l in links:
-                if 'idGara=' in l['href']:
-                    id_g = l['href'].split('idGara=')[1].split('&')[0]
-                    if id_g not in id_sottogare:
-                        id_sottogare.append(id_g)
-            
-            if not id_sottogare:
-                continue
-            
-            print(f"\n   🟢 Comp {id_comp}: Trovate {len(id_sottogare)} gare. Download atleti...")
-
-            for id_g in id_sottogare:
-                # 👉 LA VERA MODIFICA: Puntiamo direttamente alla pagina HTML della singola gara!
-                url_singola_gara = f"https://comitati.fisi.org/veneto/gara/?idGara={id_g}&idComp={id_comp}&d=2025"
-                r_data = requests.get(url_singola_gara, headers=HEADERS, timeout=15)
-                
-                classifica_soup = BeautifulSoup(r_data.text, 'html.parser')
-                
-                # Cerchiamo tutte le tabelle nella pagina
-                tables = classifica_soup.find_all('table')
-                
-                if not tables:
-                    print(f"      ⚠️ Gara {id_g}: Nessuna tabella HTML trovata nella pagina.")
-                    continue
-
-                batch_atleti = []
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows:
-                        cols = row.find_all(['td', 'th'])
-                        if len(cols) >= 5:
-                            d = [c.get_text(strip=True) for c in cols]
-                            # Se la prima cella contiene un numero (la Posizione in classifica)
-                            if d[0].isdigit():
-                                batch_atleti.append({
-                                    "id_gara_fisi": id_g, 
-                                    "posizione": int(d[0]),
-                                    "atleta_nome": d[2],
-                                    "societa": d[4]
-                                })
-                
-                if batch_atleti:
-                    try:
-                        supabase.table("Risultati").upsert(batch_atleti).execute()
-                        print(f"      ✅ Gara {id_g}: {len(batch_atleti)} atleti salvati!")
-                    except Exception as db_err:
-                        print(f"      ❌ Errore DB: {db_err}")
-                else:
-                    print(f"      ⚠️ Gara {id_g}: Tabella presente, ma struttura non riconosciuta (nomi atleti non trovati).")
-                
-                time.sleep(0.5) # Pausa di sicurezza per non affaticare il server
-
-        except Exception as e:
-            print(f"   ❌ Errore sulla Comp {id_comp}: {e}")
+    # 3. Cerchiamo strutture alternative (se non è né PDF né AJAX)
+    if not pdf_links and not trovato_ajax:
+        print("\n👽 STRUTTURA HTML ALTERNATIVA TROVATA. Ricerca blocchi dati...")
+        # Estraiamo tutto il testo pulito per vedere se i nomi ci sono
+        testo = soup.get_text(separator=' | ', strip=True)
+        print(f"   📝 Anteprima testo: {testo[:500]}...")
 
 if __name__ == "__main__":
-    master_spider_atleti()
+    indagine_raggi_x()
