@@ -1,13 +1,18 @@
+import os
 import requests
-import json
+from supabase import create_client
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-def esplora_api():
+def avvia_estrazione_calendario_corretta():
     params = {
         "action": "competizioni_get_all",
         "offset": 0,
-        "limit": 1, # Chiediamo SOLO 1 record per analizzarlo
+        "limit": 100,
         "url": "https://comitati.fisi.org/veneto/calendario/",
         "idStagione": "2025", 
         "disciplina": "",
@@ -15,24 +20,39 @@ def esplora_api():
         "dataFine": "30/05/2026"
     }
 
-    print("--- 🔦 ACCENDO LA TORCIA SULL'API ---")
-    
+    all_gare = []
+    print("--- 🚀 INIZIO DOWNLOAD CALENDARIO ---")
+
     try:
-        r = requests.get(BASE_URL, params=params, timeout=15)
-        data = r.json()
-        
-        if data:
-            print("\n--- 🎯 ECCO COSA CI MANDA DAVVERO IL SITO FISI: ---")
-            # Stampiamo il dizionario formattato in modo leggibile
-            print(json.dumps(data[0], indent=4))
-            print("---------------------------------------------------")
-            print("Cerca nel testo qui sopra il numero a 5 cifre (es. 56782).")
-            print("Come si chiama l'etichetta alla sua sinistra?")
-        else:
-            print("Nessun dato ricevuto.")
+        while True:
+            r = requests.get(BASE_URL, params=params, timeout=30)
+            data = r.json()
+            if not data: break
+
+            for item in data:
+                # Usiamo FINAMENTE le etichette giuste!
+                record = {
+                    "id_gara_fisi": str(item.get("idCompetizione")), 
+                    "gara_nome": item.get("nome")
+                }
+                
+                # Se nel tuo DB hai le colonne "localita" e "data_gara", 
+                # togli il '#' dalle due righe qui sotto per salvarle:
+                # record["localita"] = item.get("comune")
+                # record["data_gara"] = item.get("dataInizio")
+                
+                all_gare.append(record)
+                
+            params["offset"] += params["limit"]
+            print(f"Scaricati {len(all_gare)} record competizioni...")
+
+        if all_gare:
+            print(f"--- 💾 INVIO {len(all_gare)} RECORD A SUPABASE ---")
+            supabase.table("Gare").upsert(all_gare).execute()
+            print("--- ✅ SUCCESSO TOTALE: CALENDARIO CARICATO! ---")
             
     except Exception as e:
-        print(f"Errore: {e}")
+        print(f"--- ❌ ERRORE: {e} ---")
 
 if __name__ == "__main__":
-    esplora_api()
+    avvia_estrazione_calendario_corretta()
