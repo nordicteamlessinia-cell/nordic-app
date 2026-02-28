@@ -14,7 +14,7 @@ def avvia_estrazione_calendario():
         "offset": 0,
         "limit": 100,
         "url": "https://comitati.fisi.org/veneto/calendario/",
-        "idStagione": "2025", 
+        "idStagione": "2025", # Puoi cambiare in "2024" se vuoi scaricare l'anno scorso
         "disciplina": "",
         "dataInizio": "01/06/2024",
         "dataFine": "30/05/2026"
@@ -31,8 +31,14 @@ def avvia_estrazione_calendario():
 
             for item in data:
                 all_gare.append({
-                    "id_gara_fisi": str(item.get("idComp")), 
+                    "id_gara_fisi": str(item.get("idComp")), # Questo estrae l'ID corretto a 5 cifre!
                     "gara_nome": item.get("titolo")
+                    
+                    # NOTA: Ho lasciato commentate 'localita' e 'societa' per evitare 
+                    # il vecchio errore di colonna non trovata. 
+                    # Se le hai create su Supabase con questi nomi esatti, togli il '#' qui sotto:
+                    # , "localita": item.get("localita")
+                    # , "societa": item.get("societa_desc")
                 })
             params["offset"] += params["limit"]
             print(f"Scaricati {len(all_gare)} record competizioni...")
@@ -42,7 +48,7 @@ def avvia_estrazione_calendario():
             supabase.table("Gare").upsert(all_gare).execute()
             print("--- ✅ SUCCESSO TOTALE: CALENDARIO CARICATO! ---")
             
-    except Exception as e: # <--- L'ERRORE DI SINTASSI ERA QUI!
+    except Exception as e:
         print(f"--- ❌ ERRORE: {e} ---")
 
 if __name__ == "__main__":
