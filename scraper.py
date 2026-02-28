@@ -1,36 +1,46 @@
 import requests
 from bs4 import BeautifulSoup
 
-def test_estrazione_custom():
+def mappa_il_ritmo():
     url_gara = "https://comitati.fisi.org/veneto/gara/?idGara=16285788&idComp=54572&d="
     HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
     
-    print("--- 🎯 ESTRAZIONE ATLETI DAL LAYOUT SEGRETO ---")
+    print("--- 🔍 CERCO IL RITMO ESATTO DEI DATI ---")
     
     try:
         res = requests.get(url_gara, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 👉 LA CHIAVE MAGICA: Cerchiamo la classe che hai trovato tu!
-        elementi_atleti = soup.find_all('span', class_='x-text-content-text-primary')
+        elementi = soup.find_all('span', class_='x-text-content-text-primary')
+        # Creiamo una lista pulita di tutti i testi
+        testi = [e.get_text(strip=True) for e in elementi if len(e.get_text(strip=True)) > 0]
         
-        nomi_puliti = []
-        for elemento in elementi_atleti:
-            testo = elemento.get_text(strip=True)
-            # Filtriamo via testi troppo corti o vuoti per tenere solo i nomi veri
-            if len(testo) > 3:
-                nomi_puliti.append(testo)
+        # Troviamo a che numero della lista si trova il nostro Martino
+        indice_martino = -1
+        for i, t in enumerate(testi):
+            if "MARTINO CAROLLO" in t.upper() or "CAROLLO MARTINO" in t.upper():
+                indice_martino = i
+                break
                 
-        if nomi_puliti:
-            print(f"✅ VITTORIA ASSOLUTA! Estratti {len(nomi_puliti)} nomi.")
-            print("\nEcco i primi 10 sciatori trovati:")
-            for i, nome in enumerate(nomi_puliti[:10], start=1):
-                print(f"   {i}. ⛷️ {nome}")
+        if indice_martino != -1:
+            print("✅ TROVATO! Ecco come sono disposti i dati in fila:\n")
+            
+            # Stampiamo 4 testi PRIMA del nome e 6 testi DOPO
+            inizio = max(0, indice_martino - 4)
+            fine = min(len(testi), indice_martino + 7)
+            
+            for i in range(inizio, fine):
+                if i == indice_martino:
+                    print(f" 🎯 [{i}] {testi[i]}  <-- IL NOME")
+                else:
+                    print(f"    [{i}] {testi[i]}")
+                    
+            print("\n💡 Incolla questo risultato, ci dirà esattamente come creare i blocchi per Supabase!")
         else:
-            print("❌ Nessun nome trovato.")
+            print("❌ Martino non trovato. Forse era scritto diversamente?")
 
     except Exception as e:
         print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    test_estrazione_custom()
+    mappa_il_ritmo()
