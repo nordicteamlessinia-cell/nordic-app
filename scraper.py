@@ -7,51 +7,58 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-def aggiorna_calendario_completo():
-    params = {
-        "action": "competizioni_get_all",
-        "offset": 0,
-        "limit": 100,
-        "url": "https://comitati.fisi.org/veneto/calendario/",
-        "idStagione": "2025", # <-- TORNATO A 2025 COME IN ORIGINE!
-        "disciplina": "",
-        "dataInizio": "01/06/2024",
-        "dataFine": "30/05/2026"
-    }
-
+def aggiorna_calendario_totale():
+    print("--- 🚀 INIZIO SCARICAMENTO CALENDARIO STORICO (2020-2026) ---")
     all_gare = []
-    print("--- 🚀 INIZIO AGGIORNAMENTO CALENDARIO (LUOGO E DATA) ---")
+    
+    # 🌟 ECCO LA MAGIA: Tutti gli anni a partire dalla stagione 2019/2020 fino ad oggi!
+    for stagione in ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
+        print(f"\n📂 Cerco le gare per la stagione {stagione}...")
+        params = {
+            "action": "competizioni_get_all",
+            "offset": 0,
+            "limit": 100,
+            "url": "https://comitati.fisi.org/veneto/calendario/",
+            "idStagione": stagione, 
+            "disciplina": "" 
+        }
 
-    try:
-        while True:
-            r = requests.get(BASE_URL, params=params, timeout=30)
-            data = r.json()
-            if not data: break
-
-            for item in data:
-                record = {
-                    "id_gara_fisi": str(item.get("idCompetizione")), 
-                    "gara_nome": item.get("nome"),
-                    "luogo": item.get("comune", "N/D"),       
-                    "data_gara": item.get("dataInizio", "N/D") 
-                }
-                all_gare.append(record)
+        try:
+            while True:
+                r = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
+                data = r.json()
                 
-                # Stampiamo a video il primo record per fare la prova del 9
-                if len(all_gare) == 1:
-                    print(f"🔍 Test Lettura: {record['gara_nome']}")
-                    print(f"📍 Luogo trovato: {record['luogo']} | 📅 Data trovata: {record['data_gara']}")
+                if not data or len(data) == 0:
+                    print(f"   🏁 Fine dati per la stagione {stagione}.")
+                    break
 
-            params["offset"] += params["limit"]
-        
-        if all_gare:
-            # L'upsert sovrascriverà le tue 131 righe aggiungendo i dati mancanti
+                for item in data:
+                    record = {
+                        "id_gara_fisi": str(item.get("idCompetizione")), 
+                        "gara_nome": item.get("nome", "N/D"),
+                        "luogo": item.get("comune", "N/D"),       
+                        "data_gara": item.get("dataInizio", "N/D") 
+                    }
+                    all_gare.append(record)
+
+                params["offset"] += params["limit"]
+                
+        except Exception as e:
+            print(f"❌ ERRORE SERVER SULLA STAGIONE {stagione}: {e}")
+
+    # INVIO A SUPABASE
+    if all_gare:
+        try:
+            print(f"\n--- 💾 STO INVIANDO {len(all_gare)} GARE STORICHE A SUPABASE... ---")
+            # Upsert assicura che se una gara c'è già, viene aggiornata, altrimenti creata
             supabase.table("Gare").upsert(all_gare).execute()
-            print(f"--- ✅ {len(all_gare)} GARE AGGIORNATE SU SUPABASE! ---")
-            
-    except Exception as e:
-        print(f"❌ ERRORE: {e}")
+            print(f"--- ✅ SUCCESSO! {len(all_gare)} GARE TOTALI SALVATE NEL DATABASE! ---")
+        except Exception as e:
+            print(f"\n❌ ERRORE SUPABASE: {e}")
+    else:
+        print("\n⚠️ NESSUNA GARA TROVATA.")
 
 if __name__ == "__main__":
-    aggiorna_calendario_completo()
+    aggiorna_calendario_totale()
