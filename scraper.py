@@ -1,39 +1,66 @@
+import os
 import requests
+from supabase import create_client
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-def detective_discipline():
-    print("--- 🕵️ INIZIO INDAGINE DISCIPLINE (Stagione 2025) ---")
-    params = {
-        "action": "competizioni_get_all",
-        "offset": 0,
-        "limit": 500, # Prendiamo una bella fettona di gare in un colpo solo
-        "url": "https://comitati.fisi.org/veneto/calendario/",
-        "idStagione": "2025", 
-        "disciplina": "" 
-    }
+def calendario_solo_fondo_esatto():
+    print("--- 🚀 INIZIO SCARICAMENTO CALENDARIO (FILTRO 'SCI DI FONDO' 2020-2026) ---")
+    all_gare = []
     
-    try:
-        r = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
-        data = r.json()
-        
-        if not data:
-            print("Nessun dato trovato per il 2025.")
-            return
-            
-        conteggio = {}
-        for item in data:
-            # Peschiamo il campo disciplina esatto che ci manda il server
-            disc = str(item.get("disciplina", "SCONOSCIUTA"))
-            conteggio[disc] = conteggio.get(disc, 0) + 1
-            
-        print(f"\n✅ Trovate {len(data)} gare totali nel 2025. Ecco le etichette segrete della FISI:")
-        for d, count in conteggio.items():
-            print(f"   🏷️ Disciplina: '{d}'  --->  Gare trovate: {count}")
-            
-    except Exception as e:
-        print(f"❌ Errore: {e}")
+    for stagione in ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
+        print(f"\n📂 Cerco le gare per la stagione {stagione}...")
+        params = {
+            "action": "competizioni_get_all",
+            "offset": 0,
+            "limit": 100,
+            "url": "https://comitati.fisi.org/veneto/calendario/",
+            "idStagione": stagione, 
+            "disciplina": "" 
+        }
+
+        try:
+            while True:
+                r = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
+                data = r.json()
+                
+                if not data or len(data) == 0:
+                    print(f"   🏁 Fine dati per la stagione {stagione}.")
+                    break
+
+                for item in data:
+                    disciplina_esatta = item.get("disciplina", "").strip().upper()
+                    
+                    # 🎯 ECCO IL FILTRO MAGICO INFALLIBILE!
+                    if disciplina_esatta == "SCI DI FONDO":
+                        record = {
+                            "id_gara_fisi": str(item.get("idCompetizione")), 
+                            "gara_nome": item.get("nome", "N/D"),
+                            "luogo": item.get("comune", "N/D"),       
+                            "data_gara": item.get("dataInizio", "N/D") 
+                        }
+                        all_gare.append(record)
+
+                params["offset"] += params["limit"]
+                
+        except Exception as e:
+            print(f"❌ ERRORE SERVER SULLA STAGIONE {stagione}: {e}")
+
+    # INVIO A SUPABASE
+    if all_gare:
+        try:
+            print(f"\n--- 💾 STO INVIANDO {len(all_gare)} GARE DI FONDO A SUPABASE... ---")
+            supabase.table("Gare").upsert(all_gare).execute()
+            print(f"--- ✅ SUCCESSO! {len(all_gare)} GARE TOTALI SALVATE NEL DATABASE! ---")
+        except Exception as e:
+            print(f"\n❌ ERRORE SUPABASE (Ricordati di disabilitare la RLS per ora!): {e}")
+    else:
+        print("\n⚠️ NESSUNA GARA TROVATA.")
 
 if __name__ == "__main__":
-    detective_discipline()
+    calendario_solo_fondo_esatto()
