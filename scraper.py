@@ -10,19 +10,19 @@ BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
 def calendario_solo_fondo():
-    print("--- 🚀 INIZIO SCARICAMENTO CALENDARIO (SOLO SCI DI FONDO 2020-2026) ---")
+    print("--- 🚀 INIZIO SCARICAMENTO CALENDARIO (FILTRO FONDO IN PYTHON) ---")
     all_gare = []
     
     # Scansioniamo dal 2020 al 2026
     for stagione in ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
-        print(f"\n📂 Cerco le gare di Fondo per la stagione {stagione}...")
+        print(f"\n📂 Cerco tutte le gare per la stagione {stagione}...")
         params = {
             "action": "competizioni_get_all",
             "offset": 0,
             "limit": 100,
             "url": "https://comitati.fisi.org/veneto/calendario/",
             "idStagione": stagione, 
-            "disciplina": "CC"  # <--- FILTRO: Solo Cross Country (Fondo)
+            "disciplina": ""  # <--- CHIEDIAMO TUTTO PER NON BLOCCARE L'API
         }
 
         try:
@@ -38,7 +38,7 @@ def calendario_solo_fondo():
                     nome_gara = item.get("nome", "N/D")
                     disciplina_server = item.get("disciplina", "").upper()
                     
-                    # Lo salviamo solo se è CC (Fondo)
+                    # 🔎 ECCO IL SETACCIO: Se è CC (Fondo) la teniamo, altrimenti la ignoriamo!
                     if disciplina_server == "CC" or "FONDO" in nome_gara.upper():
                         record = {
                             "id_gara_fisi": str(item.get("idCompetizione")), 
