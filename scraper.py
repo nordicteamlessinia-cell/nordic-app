@@ -9,8 +9,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-def calendario_solo_fondo_esatto():
-    print("--- 🚀 INIZIO SCARICAMENTO CALENDARIO (FILTRO 'SCI DI FONDO' 2020-2026) ---")
+def calendario_solo_fondo_esteso():
+    print("--- 🚀 INIZIO RICERCA ESTESA (FILTRO 'SCI DI FONDO' + NOME GARA) ---")
     all_gare = []
     
     for stagione in ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
@@ -34,13 +34,17 @@ def calendario_solo_fondo_esatto():
                     break
 
                 for item in data:
-                    disciplina_esatta = item.get("disciplina", "").strip().upper()
+                    nome_gara = item.get("nome", "N/D")
+                    # Peschiamo la disciplina, ma la proteggiamo se per caso è vuota (None)
+                    disciplina_raw = item.get("disciplina")
+                    disciplina_esatta = str(disciplina_raw).strip().upper() if disciplina_raw else ""
                     
-                    # 🎯 ECCO IL FILTRO MAGICO INFALLIBILE!
-                    if disciplina_esatta == "SCI DI FONDO":
+                    # 🎯 IL SETACCIO A DOPPIA MAGLIA!
+                    # Prende la gara se l'etichetta è giusta OPPURE se "FONDO" è nel titolo
+                    if disciplina_esatta == "SCI DI FONDO" or "FONDO" in nome_gara.upper():
                         record = {
                             "id_gara_fisi": str(item.get("idCompetizione")), 
-                            "gara_nome": item.get("nome", "N/D"),
+                            "gara_nome": nome_gara,
                             "luogo": item.get("comune", "N/D"),       
                             "data_gara": item.get("dataInizio", "N/D") 
                         }
@@ -54,13 +58,13 @@ def calendario_solo_fondo_esatto():
     # INVIO A SUPABASE
     if all_gare:
         try:
-            print(f"\n--- 💾 STO INVIANDO {len(all_gare)} GARE DI FONDO A SUPABASE... ---")
+            print(f"\n--- 💾 STO INVIANDO {len(all_gare)} GARE A SUPABASE... ---")
             supabase.table("Gare").upsert(all_gare).execute()
             print(f"--- ✅ SUCCESSO! {len(all_gare)} GARE TOTALI SALVATE NEL DATABASE! ---")
         except Exception as e:
-            print(f"\n❌ ERRORE SUPABASE (Ricordati di disabilitare la RLS per ora!): {e}")
+            print(f"\n❌ ERRORE SUPABASE: {e}")
     else:
         print("\n⚠️ NESSUNA GARA TROVATA.")
 
 if __name__ == "__main__":
-    calendario_solo_fondo_esatto()
+    calendario_solo_fondo_esteso()
