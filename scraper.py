@@ -10,10 +10,11 @@ BASE_URL = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
 def calendario_solo_fondo_esteso():
-    print("--- 🚀 INIZIO RICERCA ESTESA (FILTRO 'SCI DI FONDO' + NOME GARA) ---")
+    print("--- 🚀 INIZIO RICERCA ESTESA MASSIMA (DAL 2018 AL 2026) ---")
     all_gare = []
     
-    for stagione in ["2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
+    # 🌟 Abbiamo aggiunto 2018 e 2019 alla lista!
+    for stagione in ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]:
         print(f"\n📂 Cerco le gare per la stagione {stagione}...")
         params = {
             "action": "competizioni_get_all",
@@ -35,12 +36,11 @@ def calendario_solo_fondo_esteso():
 
                 for item in data:
                     nome_gara = item.get("nome", "N/D")
-                    # Peschiamo la disciplina, ma la proteggiamo se per caso è vuota (None)
+                    # Peschiamo la disciplina, ma la proteggiamo se per caso è vuota
                     disciplina_raw = item.get("disciplina")
                     disciplina_esatta = str(disciplina_raw).strip().upper() if disciplina_raw else ""
                     
-                    # 🎯 IL SETACCIO A DOPPIA MAGLIA!
-                    # Prende la gara se l'etichetta è giusta OPPURE se "FONDO" è nel titolo
+                    # 🎯 IL SETACCIO A DOPPIA MAGLIA
                     if disciplina_esatta == "SCI DI FONDO" or "FONDO" in nome_gara.upper():
                         record = {
                             "id_gara_fisi": str(item.get("idCompetizione")), 
