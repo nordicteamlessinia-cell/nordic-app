@@ -11,7 +11,6 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
 def calcola_stagione_fisi(data_gara):
-    """Calcola l'ID della stagione FISI partendo dalla data (es. 15/12/2023 -> 2024)"""
     try:
         if not data_gara or data_gara == "N/D": return "2026"
         p = data_gara.split("/")
@@ -20,22 +19,23 @@ def calcola_stagione_fisi(data_gara):
     except: pass
     return "2026"
 
-def spider_atleti_definitivo():
-    print("--- 📂 RECUPERO LE 125+ GARE DI FONDO DAL DATABASE... ---")
-    gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome").execute()
+def spider_atleti_master_con_tempo():
+    print("--- 📂 RECUPERO LE GARE DI FONDO DAL DATABASE... ---")
+    gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⛷️ INIZIO ESTRAZIONE ATLETI SU {len(lista_gare)} EVENTI STORICI ---")
+    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI (CON TEMPO GARA) ---")
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
         data_g = gara.get('data_gara')
         nome_g = gara.get('gara_nome')
+        luogo_g = gara.get('luogo')
         
         if not id_comp: continue
         
         stagione_fisi = calcola_stagione_fisi(data_g)
-        print(f"\n🟢 Analizzo: {nome_g} (Data: {data_g} -> Stagione Web: {stagione_fisi})")
+        print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} (Data: {data_g})")
         
         url_comp = f"https://comitati.fisi.org/veneto/competizione/?idComp={id_comp}&d={stagione_fisi}"
         
@@ -46,7 +46,7 @@ def spider_atleti_definitivo():
             id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
             
             if not id_sottogare:
-                print("   ⏩ Nessuna classifica trovata per questo evento.")
+                print("   ⏩ Nessuna classifica trovata.")
                 continue
 
             for id_g in id_sottogare:
@@ -54,29 +54,26 @@ def spider_atleti_definitivo():
                 r_data = requests.get(url_gara, headers=HEADERS, timeout=15)
                 gara_soup = BeautifulSoup(r_data.text, 'html.parser')
                 
-                # 🎯 1. ESTRAZIONE CATEGORIA E SPECIALITÀ (Fusione intelligente)
+                # ESTRAZIONE CATEGORIA E SPECIALITÀ
                 testi_completi = list(gara_soup.stripped_strings)
                 cat, spec = "", ""
-                
                 for i, t in enumerate(testi_completi):
                     testo_upper = t.upper()
-                    if "CATEGORIA" == testo_upper and i + 1 < len(testi_completi):
-                        if testi_completi[i+1].upper() != "POS.":
-                            cat = testi_completi[i+1]
+                    if "CATEGORIA" == testo_upper and i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "POS.":
+                        cat = testi_completi[i+1]
                     if "SPECIALITÀ" in testo_upper or "SPECIALITA" in testo_upper:
                         if i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "CATEGORIA":
                             spec = testi_completi[i+1]
                             
                 categoria_finale = f"{spec} - {cat}".strip(" -") if spec or cat else "Generale"
 
-                # ⛷️ 2. ESTRAZIONE ATLETI (Finestra a 8 blocchi)
+                # ESTRAZIONE ATLETI E TEMPI
                 elementi_atleti = gara_soup.find_all('span', class_='x-text-content-text-primary')
                 testi_atleti = [e.get_text(strip=True) for e in elementi_atleti if len(e.get_text(strip=True)) > 0]
                 
                 batch_atleti = []
                 i = 0
                 while i < len(testi_atleti) - 7:
-                    # Cerchiamo Posizione + Codice FISI
                     if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
                         batch_atleti.append({
                             "id_gara_fisi": id_g, 
@@ -84,7 +81,11 @@ def spider_atleti_definitivo():
                             "posizione": int(testi_atleti[i]),
                             "atleta_nome": testi_atleti[i+2],
                             "societa": testi_atleti[i+4],
-                            "categoria": categoria_finale 
+                            "tempo": testi_atleti[i+5], # ⏱️ ECCO IL TEMPO CHE ABBIAMO AGGIUNTO!
+                            "categoria": categoria_finale,
+                            "gara_nome": nome_g,
+                            "luogo": luogo_g,
+                            "data_gara": data_g
                         })
                         i += 8
                     else:
@@ -92,9 +93,7 @@ def spider_atleti_definitivo():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti in [{categoria_finale}]")
-                else:
-                    print(f"   ⚠️ Nessun atleta estratto in Gara {id_g}")
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti con i loro Tempi Gara!")
                 
                 time.sleep(0.5)
 
@@ -102,4 +101,4 @@ def spider_atleti_definitivo():
             print(f"   ❌ Errore sull'evento {id_comp}: {e}")
 
 if __name__ == "__main__":
-    spider_atleti_definitivo()
+    spider_atleti_master_con_tempo()
