@@ -34,7 +34,7 @@ def scraper_fis_master():
         
         link_gare = []
         for a in soup.find_all('a', href=True):
-            if 'race-results.html' in a['href'] and 'raceid=' in a['href']:
+           if 'results.html' in a.get('href', '') and 'raceid=' in a.get('href', ''):
                 link_gare.append(a['href'])
                 
         link_gare = list(set(link_gare)) # Rimuovo i duplicati
