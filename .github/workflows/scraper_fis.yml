@@ -1,9 +1,9 @@
 name: Bot Scraper FIS
 
 on:
-  workflow_dispatch: # 🔘 Ti permette di lanciarlo a mano con un pulsante!
+  workflow_dispatch:
   schedule:
-    - cron: '30 2 * * *' # ⏰ Gira in automatico alle 02:30 di notte
+    - cron: '30 2 * * *'
 
 jobs:
   aggiorna-database-fis:
@@ -14,7 +14,7 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       
     steps:
-      - name: Scarico il codice (Checkout)
+      - name: Scarico il codice
         uses: actions/checkout@v3
 
       - name: Preparo Python
@@ -22,10 +22,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Installo le librerie
+      - name: Installo le librerie e il Browser Fantasma
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          playwright install chromium
 
       - name: 🚀 Lancia lo Scraper FIS!
         run: python scraper_fis.py
