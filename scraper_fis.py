@@ -17,7 +17,7 @@ BASE_URL = "https://www.fis-ski.com"
 URL_CALENDARIO = f"{BASE_URL}/DB/cross-country/calendar-results.html?sectorcode=CC&nationcode=ita&seasoncode=2026"
 
 def scraper_fis_master():
-    print("--- 🌍 AVVIO SCRAPER FIS (MODALITÀ MATRIOSKA) ---")
+    print("--- 🌍 AVVIO SCRAPER FIS (PRODUZIONE) ---")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -46,25 +46,23 @@ def scraper_fis_master():
         link_gare = []
         print("\nEntro negli eventi per cercare le singole gare...")
         
-        # ⚠️ TEST: Controllo solo i primi 2 Eventi per fare in fretta
-        for ev in link_eventi[:2]: 
+        # ORA CONTROLLA TUTTI GLI EVENTI (nessun limite)
+        for ev in link_eventi: 
             url_ev = BASE_URL + ev if not ev.startswith('http') else ev
-            print(f"   ➡️ Apro Evento...")
             page.goto(url_ev, timeout=60000)
             page.wait_for_timeout(3000)
             
             ev_soup = BeautifulSoup(page.content(), 'html.parser')
             for a in ev_soup.find_all('a', href=True):
-                # Ora cerco i risultati delle singole gare!
                 if 'raceid=' in a['href']:
                     link_gare.append(a['href'])
                     
         link_gare = list(set(link_gare))
-        print(f"🎯 JACKPOT! Trovate {len(link_gare)} singole gare in questi eventi.\n")
+        print(f"🎯 JACKPOT! Trovate {len(link_gare)} singole gare totali da scansionare.\n")
 
         # 📦 LIVELLO 3: LA GARA (Estraggo gli Atleti)
-        # ⚠️ TEST: Controllo solo le prime 2 gare
-        for link in link_gare[:2]: 
+        # ORA CONTROLLA TUTTE LE GARE
+        for link in link_gare: 
             url_gara = BASE_URL + link if not link.startswith('http') else link
             id_gara_fis = link.split('raceid=')[1].split('&')[0] if 'raceid=' in link else "N/D"
             
@@ -115,12 +113,13 @@ def scraper_fis_master():
                         continue 
             
             if batch_risultati:
-                supabase.table("Risultati_FIS").upsert(batch_risultati).execute()
+                # ECCO IL FIX DELLA VITTORIA: Risultati_Fis (come su Supabase)
+                supabase.table("Risultati_Fis").upsert(batch_risultati).execute()
                 print(f"   ✅ Salvati {len(batch_risultati)} atleti!")
             else:
-                print("   ⚠️ Nessun atleta trovato con il formato atteso.")
+                print("   ⚠️ Nessun atleta trovato con il formato atteso in questa specifica gara.")
                 
-        print("\n🏁 TEST COMPLETATO!")
+        print("\n🏁 CALENDARIO FIS COMPLETAMENTE SCARICATO!")
         browser.close()
 
 if __name__ == "__main__":
