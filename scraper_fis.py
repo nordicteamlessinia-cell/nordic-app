@@ -1,5 +1,4 @@
 import os
-import time
 from bs4 import BeautifulSoup
 from supabase import create_client
 from playwright.sync_api import sync_playwright
@@ -18,52 +17,60 @@ BASE_URL = "https://www.fis-ski.com"
 URL_CALENDARIO = f"{BASE_URL}/DB/cross-country/calendar-results.html?sectorcode=CC&nationcode=ita&seasoncode=2026"
 
 def scraper_fis_master():
-    print("--- 🌍 AVVIO SCRAPER FIS (BROWSER INVISIBILE) ---")
+    print("--- 🌍 AVVIO SCRAPER FIS (MODALITÀ MATRIOSKA) ---")
     
-    # Apriamo il browser Chrome fantasma
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
-        print(f"🔍 Apro il calendario e aspetto l'autorizzazione FIS...")
+        # 📦 LIVELLO 1: IL CALENDARIO (Cerco gli Eventi)
+        print("🔍 Apro il calendario e cerco gli 'Eventi'...")
         page.goto(URL_CALENDARIO, timeout=60000)
-        
-        # IL TRUCCO: Aspettiamo 5 secondi che Javascript popoli la tabella!
         page.wait_for_timeout(5000) 
+        soup = BeautifulSoup(page.content(), 'html.parser')
         
-        # Ora prendiamo il codice della pagina caricata
-        html = page.content()
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        link_gare = []
+        link_eventi = []
         for a in soup.find_all('a', href=True):
-            href = a['href']
-            # I link FIS possono usare raceid o racecodex
-            if 'raceid=' in href or 'racecodex=' in href:
-                link_gare.append(href)
+            if 'eventid=' in a['href']:
+                link_eventi.append(a['href'])
                 
-        link_gare = list(set(link_gare)) 
-        print(f"🎯 BARRIERA SUPERATA! Trovate {len(link_gare)} gare FIS in Italia.\n")
+        link_eventi = list(set(link_eventi)) 
+        print(f"🎟️ Trovati {len(link_eventi)} Eventi FIS in Italia.")
 
-        if len(link_gare) == 0:
-            print("🛑 Il Javascript non si è caricato. Dobbiamo ritentare.")
+        if not link_eventi:
+            print("🛑 Nessun evento trovato. Esco.")
             browser.close()
             return
 
-        # FASE 2: Entro nelle gare (NE FACCIO SOLO 3 PER TEST)
-        for link in link_gare[:3]:
+        # 📦 LIVELLO 2: L'EVENTO (Cerco le Gare)
+        link_gare = []
+        print("\nEntro negli eventi per cercare le singole gare...")
+        
+        # ⚠️ TEST: Controllo solo i primi 2 Eventi per fare in fretta
+        for ev in link_eventi[:2]: 
+            url_ev = BASE_URL + ev if not ev.startswith('http') else ev
+            print(f"   ➡️ Apro Evento...")
+            page.goto(url_ev, timeout=60000)
+            page.wait_for_timeout(3000)
+            
+            ev_soup = BeautifulSoup(page.content(), 'html.parser')
+            for a in ev_soup.find_all('a', href=True):
+                # Ora cerco i risultati delle singole gare!
+                if 'raceid=' in a['href']:
+                    link_gare.append(a['href'])
+                    
+        link_gare = list(set(link_gare))
+        print(f"🎯 JACKPOT! Trovate {len(link_gare)} singole gare in questi eventi.\n")
+
+        # 📦 LIVELLO 3: LA GARA (Estraggo gli Atleti)
+        # ⚠️ TEST: Controllo solo le prime 2 gare
+        for link in link_gare[:2]: 
             url_gara = BASE_URL + link if not link.startswith('http') else link
+            id_gara_fis = link.split('raceid=')[1].split('&')[0] if 'raceid=' in link else "N/D"
             
-            if 'raceid=' in link:
-                id_gara_fis = link.split('raceid=')[1].split('&')[0]
-            elif 'racecodex=' in link:
-                id_gara_fis = link.split('racecodex=')[1].split('&')[0]
-            else:
-                id_gara_fis = "N/D"
-            
-            print(f"⛷️ Analizzo gara FIS ID: {id_gara_fis}")
+            print(f"⛷️ Analizzo Gara FIS ID: {id_gara_fis}")
             page.goto(url_gara, timeout=60000)
-            page.wait_for_timeout(3000) # Aspetto 3 secondi che carichi la classifica
+            page.wait_for_timeout(3000)
             
             gara_soup = BeautifulSoup(page.content(), 'html.parser')
             titolo_gara = gara_soup.find('h1').text.strip() if gara_soup.find('h1') else "Gara FIS"
@@ -104,15 +111,15 @@ def scraper_fis_master():
                             "punti_fis": punti_puliti,
                             "categoria": titolo_gara
                         })
-                    except Exception as parse_e:
+                    except:
                         continue 
             
             if batch_risultati:
                 supabase.table("Risultati_FIS").upsert(batch_risultati).execute()
-                print(f"   ✅ Salvati {len(batch_risultati)} atleti nel database!")
+                print(f"   ✅ Salvati {len(batch_risultati)} atleti!")
             else:
-                print("   ⚠️ Classifica non disponibile o formato sconosciuto.")
-            
+                print("   ⚠️ Nessun atleta trovato con il formato atteso.")
+                
         print("\n🏁 TEST COMPLETATO!")
         browser.close()
 
