@@ -1,4 +1,5 @@
 import os
+import re  # <--- NUOVO STRUMENTO: Le Espressioni Regolari (La Lavatrice)
 from bs4 import BeautifulSoup
 from supabase import create_client
 from playwright.sync_api import sync_playwright
@@ -18,7 +19,7 @@ BASE_URL = "https://www.fis-ski.com"
 STAGIONI = ["2023", "2024", "2025", "2026"]
 
 def scraper_fis_master():
-    print("--- 🌍 AVVIO SCRAPER FIS (MOTORE SEMANTICO) ---")
+    print("--- 🌍 AVVIO SCRAPER FIS (PULIZIA STRINGHE ATTIVA) ---")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -72,30 +73,35 @@ def scraper_fis_master():
                 luogo = "Italia"
                 data_gara = stagione
                 specialita = "N/D"
-                categoria = "FIS" # Valore di default
+                categoria = "FIS" 
                 
-                # 1. IL LUOGO (H1) -> Di solito è pulito, es: "Toblach (ITA)"
                 h1 = gara_soup.find('h1')
                 if h1:
                     luogo = h1.text.replace("junior", "").replace("Junior", "").strip()
                 
-                # Raccogliamo tutto il testo dell'intestazione per analizzarlo
                 header_texts = []
                 for tag in gara_soup.find_all(['h1', 'h2', 'h3', 'div', 'span', 'p']):
                     testo = tag.get_text(separator=" ", strip=True)
                     if testo and len(testo) < 60 and testo not in header_texts:
                         header_texts.append(testo)
                 
-                # Leggiamo i testi come un essere umano
                 for testo in header_texts:
                     t_low = testo.lower()
                     
-                    # 🎯 Trova la DISCIPLINA (se contiene km, sprint, mass start, ecc.)
+                    # 🎯 Trova la DISCIPLINA e la PASSA NELLA "LAVATRICE"
                     if any(x in t_low for x in ['km', 'sprint', 'skiathlon', 'pursuit', 'mass start', 'relay']):
                         if specialita == "N/D":
-                            specialita = testo
+                            pulita = testo
+                            # 1. Taglia via tutto quello che c'è dopo la sbarretta (es. " | EYOF ▾")
+                            pulita = pulita.split('|')[0]
+                            # 2. Usa Regex per cancellare eventuali date all'inizio (es. "23.01.2023 - ")
+                            pulita = re.sub(r"^\s*\d{2}\.\d{2}\.\d{4}\s*-\s*", "", pulita)
+                            # 3. Toglie le freccette del menu a tendina e gli spazi in eccesso
+                            pulita = pulita.replace("▾", "").replace("▼", "").strip()
                             
-                    # 🎯 Trova la CATEGORIA in modo esatto
+                            specialita = pulita
+                            
+                    # 🎯 Trova la CATEGORIA
                     if 'junior' in t_low:
                         categoria = "Junior"
                     elif 'u23' in t_low:
@@ -149,8 +155,8 @@ def scraper_fis_master():
                                 "nazione": nazione,
                                 "tempo": tempo,
                                 "punti_fis": punti_puliti,
-                                "categoria": categoria,      # ⬅️ ORA È CORRETTA!
-                                "specialita": specialita     # ⬅️ ORA PRENDE I KM / SPRINT!
+                                "categoria": categoria,      
+                                "specialita": specialita     # ORA ENTRA SUPER PULITA!
                             })
                         except:
                             continue 
