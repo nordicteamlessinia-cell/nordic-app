@@ -18,7 +18,7 @@ BASE_URL = "https://www.fis-ski.com"
 STAGIONI = ["2023", "2024", "2025", "2026"]
 
 def scraper_fis_master():
-    print("--- 🌍 AVVIO SCRAPER FIS (STORICO COMPLETO V2) ---")
+    print("--- 🌍 AVVIO SCRAPER FIS (MOTORE SEMANTICO) ---")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -41,8 +41,6 @@ def scraper_fis_master():
                     link_eventi.append(a['href'])
                     
             link_eventi = list(set(link_eventi)) 
-            print(f"🎟️ Trovati {len(link_eventi)} Eventi.")
-
             if not link_eventi:
                 continue
 
@@ -58,50 +56,64 @@ def scraper_fis_master():
                         link_gare.append(a['href'])
                         
             link_gare = list(set(link_gare))
-            print(f"🎯 Trovate {len(link_gare)} singole gare nel {stagione}.\n")
+            print(f"🎯 Trovate {len(link_gare)} gare nel {stagione}.\n")
 
             for link in link_gare: 
                 url_gara = BASE_URL + link if not link.startswith('http') else link
                 id_gara_fis = link.split('raceid=')[1].split('&')[0] if 'raceid=' in link else "N/D"
                 
-                print(f"⛷️ Analizzo Gara FIS ID: {id_gara_fis} ({stagione})")
+                print(f"⛷️ Analizzo Gara ID: {id_gara_fis}")
                 page.goto(url_gara, timeout=60000)
                 page.wait_for_timeout(2500)
                 
                 gara_soup = BeautifulSoup(page.content(), 'html.parser')
                 
-                # --- 🎯 ESTRAZIONE DI PRECISIONE ---
-                
-                # 1. IL LUOGO (H1)
-                h1 = gara_soup.find('h1')
-                luogo = h1.text.strip() if h1 else "Italia"
-                
-                # 2. LA DATA (Cerca span/div con 'date')
-                data_gara = stagione 
-                for tag in gara_soup.find_all(['span', 'div', 'p']):
-                    if any('date' in str(c).lower() for c in tag.get('class', [])):
-                        data_gara = tag.text.strip()
-                        break
-                        
-                # 3. LA DISCIPLINA / SPECIALITA' (Es. "10km Free", "Sprint")
+                # --- 🧠 MOTORE SEMANTICO DI ESTRAZIONE ---
+                luogo = "Italia"
+                data_gara = stagione
                 specialita = "N/D"
-                # Tentativo A: Cerca la classe esatta 'event-header__name'
-                div_name = gara_soup.find('div', class_='event-header__name')
-                if div_name:
-                    specialita = div_name.text.strip()
+                categoria = "FIS" # Valore di default
                 
-                # Tentativo B: Cerca la classe 'event-header__kind'
-                if specialita == "N/D" or specialita == "":
-                    div_kind = gara_soup.find(lambda tag: tag.has_attr('class') and any('kind' in str(c).lower() for c in tag['class']))
-                    if div_kind:
-                        specialita = div_kind.text.strip()
+                # 1. IL LUOGO (H1) -> Di solito è pulito, es: "Toblach (ITA)"
+                h1 = gara_soup.find('h1')
+                if h1:
+                    luogo = h1.text.replace("junior", "").replace("Junior", "").strip()
+                
+                # Raccogliamo tutto il testo dell'intestazione per analizzarlo
+                header_texts = []
+                for tag in gara_soup.find_all(['h1', 'h2', 'h3', 'div', 'span', 'p']):
+                    testo = tag.get_text(separator=" ", strip=True)
+                    if testo and len(testo) < 60 and testo not in header_texts:
+                        header_texts.append(testo)
+                
+                # Leggiamo i testi come un essere umano
+                for testo in header_texts:
+                    t_low = testo.lower()
+                    
+                    # 🎯 Trova la DISCIPLINA (se contiene km, sprint, mass start, ecc.)
+                    if any(x in t_low for x in ['km', 'sprint', 'skiathlon', 'pursuit', 'mass start', 'relay']):
+                        if specialita == "N/D":
+                            specialita = testo
+                            
+                    # 🎯 Trova la CATEGORIA in modo esatto
+                    if 'junior' in t_low:
+                        categoria = "Junior"
+                    elif 'u23' in t_low:
+                        categoria = "U23"
+                    elif 'world cup' in t_low:
+                        categoria = "World Cup"
+                    elif 'alpen' in t_low or 'opa' in t_low:
+                        categoria = "Alpen Cup / OPA"
+                    elif 'championship' in t_low:
+                        categoria = "Championship"
+                    elif 'national' in t_low:
+                        categoria = "National Race"
                         
-                # Tentativo C: Se proprio non lo trova, prende il primo sottotitolo H2
-                if specialita == "N/D" or specialita == "":
-                    h2 = gara_soup.find('h2')
-                    if h2:
-                        specialita = h2.text.strip()
-                # -----------------------------------
+                    # 🎯 Trova la DATA
+                    elif any(month in t_low for month in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', '2023', '2024', '2025', '2026']):
+                        if any(char.isdigit() for char in testo) and len(testo) < 20:
+                            data_gara = testo
+                # ----------------------------------------
 
                 righe_atleti = gara_soup.find_all('div', class_='g-row')
                 if not righe_atleti:
@@ -137,15 +149,15 @@ def scraper_fis_master():
                                 "nazione": nazione,
                                 "tempo": tempo,
                                 "punti_fis": punti_puliti,
-                                "categoria": "FIS", 
-                                "specialita": specialita  # <--- Qui entra la magia!
+                                "categoria": categoria,      # ⬅️ ORA È CORRETTA!
+                                "specialita": specialita     # ⬅️ ORA PRENDE I KM / SPRINT!
                             })
                         except:
                             continue 
                 
                 if batch_risultati:
                     supabase.table("Risultati_Fis").upsert(batch_risultati).execute()
-                    print(f"   ✅ Salvati {len(batch_risultati)} atleti! (Disciplina: {specialita})")
+                    print(f"   ✅ Salvati {len(batch_risultati)} atleti | Cat: {categoria} | Disp: {specialita}")
                 else:
                     print("   ⚠️ Nessun atleta o formato non standard.")
                     
