@@ -1,0 +1,31 @@
+name: Bot Scraper FIS
+
+on:
+  workflow_dispatch: # 🔘 Ti permette di lanciarlo a mano con un pulsante!
+  schedule:
+    - cron: '30 2 * * *' # ⏰ Gira in automatico alle 02:30 di notte
+
+jobs:
+  aggiorna-database-fis:
+    runs-on: ubuntu-latest
+    
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      
+    steps:
+      - name: Scarico il codice (Checkout)
+        uses: actions/checkout@v3
+
+      - name: Preparo Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installo le librerie
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🚀 Lancia lo Scraper FIS!
+        run: python scraper_fis.py
