@@ -14,11 +14,10 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Costanti e URL
 BASE_URL = "https://www.fis-ski.com"
-URL_CALENDARIO = f"{BASE_URL}/DB/cross-country/calendar-results.html?sectorcode=CC&nationcode=ita&seasonselection=2026"
+# Ho corretto il parametro in seasoncode per fargli digerire l'anno
+URL_CALENDARIO = f"{BASE_URL}/DB/cross-country/calendar-results.html?sectorcode=CC&nationcode=ita&seasoncode=2026"
 
-# Mascheriamo il bot
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, come Gecko) Chrome/122.0.0.0 Safari/537.36'
 }
@@ -27,22 +26,41 @@ def scraper_fis_master():
     print("--- 🌍 AVVIO SCRAPER FIS (ITALIA - 2026) ---")
     
     try:
-        # FASE 1: Trovo tutti i link delle gare
-        print("🔍 Cerco le gare nel calendario...")
+        print(f"🔍 Cerco le gare al link: {URL_CALENDARIO}")
         res = requests.get(URL_CALENDARIO, headers=HEADERS, timeout=15)
+        
+        # Testiamo se la FIS ci sta mettendo un muro davanti
+        if res.status_code != 200:
+            print(f"❌ La FIS ci ha bloccato con un errore: {res.status_code}")
+            return
+
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        # Estraggo letteralmente TUTTI i link della pagina
+        tutti_i_link = soup.find_all('a', href=True)
+        print(f"📡 Radar: Il sito ha risposto. Trovati {len(tutti_i_link)} link generici nella pagina.")
+        
+        if len(tutti_i_link) < 20:
+             print("⚠️ ATTENZIONE: Pochissimi link! Probabile blocco anti-bot o caricamento JavaScript attivo.")
+             print(f"Anteprima testo pagina: {soup.text[:300]}")
+        
         link_gare = []
-        for a in soup.find_all('a', href=True):
-           if 'results.html' in a.get('href', '') and 'raceid=' in a.get('href', ''):
-                link_gare.append(a['href'])
+        for a in tutti_i_link:
+            href = a.get('href', '')
+            # Adesso cerchiamo SOLO 'raceid=', senza farci ingannare da altri pezzi di link
+            if 'raceid=' in href:
+                link_gare.append(href)
                 
         link_gare = list(set(link_gare)) # Rimuovo i duplicati
         print(f"🎯 Trovate {len(link_gare)} gare FIS in Italia. Inizio l'estrazione...\n")
 
+        if len(link_gare) == 0:
+            print("🛑 Mi fermo qui: Nessun link con 'raceid=' trovato. Devo analizzare i dati grezzi.")
+            return
+
         # FASE 2: Entro in ogni singola gara
         for link in link_gare:
-            url_gara = BASE_URL + link
+            url_gara = BASE_URL + link if not link.startswith('http') else link
             id_gara_fis = link.split('raceid=')[1].split('&')[0] if 'raceid=' in link else "N/D"
             
             print(f"⛷️ Analizzo gara FIS ID: {id_gara_fis}")
@@ -51,10 +69,8 @@ def scraper_fis_master():
                 r_gara = requests.get(url_gara, headers=HEADERS, timeout=15)
                 gara_soup = BeautifulSoup(r_gara.text, 'html.parser')
                 
-                # Cerco il titolo/categoria della gara in alto
                 titolo_gara = gara_soup.find('h1').text.strip() if gara_soup.find('h1') else "Gara FIS"
                 
-                # La FIS usa spesso dei div o link specifici (classe g-row o pr-1) per gli atleti
                 righe_atleti = gara_soup.find_all('div', class_='g-row')
                 if not righe_atleti:
                     righe_atleti = gara_soup.find_all('a', class_='pr-1')
@@ -62,38 +78,26 @@ def scraper_fis_master():
                 batch_risultati = []
                 
                 for riga in righe_atleti:
-                    # Estraggo tutti i testi puliti da questa riga
                     testi = [t.strip() for t in riga.stripped_strings if t.strip()]
-                    
-                    # Se ci sono abbastanza dati (es. Posizione, Codice, Nome, Anno, Nazione, Tempo, Punti)
                     if len(testi) >= 5:
                         try:
-                            # Cerco il codice FIS (di solito è l'unico numero lungo a 6-7 cifre)
                             codice_fis = next((t for t in testi if len(t) >= 6 and t.isdigit()), "N/D")
-                            
-                            # Il tempo di solito contiene i due punti ":"
                             tempo = next((t for t in testi if ":" in t), "N/D")
-                            
-                            # I punti FIS spesso contengono un punto "."
                             punti_str = next((t for t in reversed(testi) if "." in t and t.replace('.','',1).isdigit()), "0.00")
                             
-                            # Il Nome (il testo in maiuscolo/lungo che non è una sigla o numero)
                             nome = "N/D"
                             for t in testi:
                                 if not t.isdigit() and ":" not in t and "." not in t and len(t) > 4 and t != "ITA":
                                     nome = t
                                     break
                                     
-                            # Nazione
                             nazione = "ITA" if "ITA" in testi else "N/D"
-                            
-                            # Posizione (primo elemento se è un numero)
                             posizione_pulita = int(testi[0]) if testi[0].isdigit() else None
                             punti_puliti = float(punti_str) if punti_str != "0.00" else None
 
                             batch_risultati.append({
                                 "id_gara_fis": id_gara_fis,
-                                "data_gara": "2026", # Per ora assegniamo l'anno della query
+                                "data_gara": "2026",
                                 "luogo": "Italia",
                                 "posizione": posizione_pulita,
                                 "codice_fis": codice_fis,
@@ -104,16 +108,15 @@ def scraper_fis_master():
                                 "categoria": titolo_gara
                             })
                         except Exception as parse_e:
-                            continue # Se una riga fallisce, passo alla successiva senza bloccare tutto
+                            continue 
                 
-                # FASE 3: Salvo su Supabase
                 if batch_risultati:
                     supabase.table("Risultati_FIS").upsert(batch_risultati).execute()
                     print(f"   ✅ Salvati {len(batch_risultati)} atleti nel database!")
                 else:
-                    print("   ⚠️ Nessun atleta trovato con il formato atteso. (Hanno cambiato l'HTML della gara)")
+                    print("   ⚠️ Nessun atleta trovato con il formato atteso.")
                 
-                time.sleep(1) # Pausa vitale di 1 secondo per non farsi bannare
+                time.sleep(1) 
                 
             except Exception as e:
                 print(f"   ❌ Errore sulla gara {id_gara_fis}: {e}")
