@@ -10,7 +10,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-# 🗺️ IL DIZIONARIO NAZIONALE: Associa il nome esatto (per Flutter) alla parola nell'URL
+# 🗺️ IL DIZIONARIO NAZIONALE: Associa il nome (dal DB) alla parola per l'URL
 COMITATI_URL = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'altoadige',
@@ -28,7 +28,8 @@ COMITATI_URL = {
     'Trentino (TN)': 'trentino',
     'Umbro Marchigiano (CUM)': 'cum',
     'Valdostano (ASIVA)': 'asiva',
-    'Veneto (VE)': 'veneto'
+    'Veneto (VE)': 'veneto',
+    'Generico': 'veneto' # Se c'è 'Generico', di default tenta col veneto (o puoi bloccarlo)
 }
 
 def calcola_stagione_fisi(data_gara):
@@ -43,8 +44,7 @@ def calcola_stagione_fisi(data_gara):
 def spider_atleti_master_con_tempo():
     print("--- 📂 RECUPERO LE GARE DI FONDO DAL DATABASE... ---")
     
-    # ⚠️ ATTENZIONE: Ho aggiunto 'comitato' alla query! 
-    # Assicurati che la tabella "Gare" in Supabase abbia questa colonna.
+    # 🎯 AGGIUNTA LA COLONNA 'comitato' ALLA SELECT!
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
@@ -55,21 +55,17 @@ def spider_atleti_master_con_tempo():
         data_g = gara.get('data_gara')
         nome_g = gara.get('gara_nome')
         luogo_g = gara.get('luogo')
-        nome_comitato = gara.get('comitato') # Es. 'Veneto (VE)'
+        nome_comitato = gara.get('comitato') # ESTRAIAMO IL COMITATO
         
-        if not id_comp or not nome_comitato: 
-            continue
-            
-        # Troviamo lo slug per l'URL. Se non lo trova, salta la gara per non fare errori.
-        slug_sito = COMITATI_URL.get(nome_comitato)
-        if not slug_sito:
-            print(f"⚠️ Comitato '{nome_comitato}' non trovato nel dizionario. Salto la gara.")
-            continue
+        if not id_comp: continue
+        
+        # TROVIAMO LA PAROLA GIUSTA PER L'URL
+        slug_sito = COMITATI_URL.get(nome_comitato, 'veneto') # Default veneto se non lo trova
         
         stagione_fisi = calcola_stagione_fisi(data_g)
-        print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} ({nome_comitato} - Data: {data_g})")
+        print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} (Data: {data_g} - Comitato: {nome_comitato})")
         
-        # 🔗 URL DINAMICO: Ora usa lo slug corretto della regione!
+        # 🔗 URL DINAMICO: Al posto di 'veneto' c'è '{slug_sito}'
         url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
         
         try:
@@ -83,7 +79,7 @@ def spider_atleti_master_con_tempo():
                 continue
 
             for id_g in id_sottogare:
-                # 🔗 URL DINAMICO ANCHE QUI
+                # 🔗 URL DINAMICO ANCHE QUI!
                 url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
                 r_data = requests.get(url_gara, headers=HEADERS, timeout=15)
                 gara_soup = BeautifulSoup(r_data.text, 'html.parser')
@@ -115,12 +111,12 @@ def spider_atleti_master_con_tempo():
                             "posizione": int(testi_atleti[i]),
                             "atleta_nome": testi_atleti[i+2],
                             "societa": testi_atleti[i+4],
-                            "tempo": testi_atleti[i+5],
+                            "tempo": testi_atleti[i+5], 
                             "categoria": categoria_finale,
                             "gara_nome": nome_g,
                             "luogo": luogo_g,
                             "data_gara": data_g,
-                            "comitato": nome_comitato # 🎯 IL TASSELLO FONDAMENTALE PER FLUTTER!
+                            "comitato": nome_comitato # 🎯 AGGIUNTO IL COMITATO PER SALVARLO NEL DB
                         })
                         i += 8
                     else:
@@ -128,12 +124,8 @@ def spider_atleti_master_con_tempo():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti ({nome_comitato})!")
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti con i loro Tempi Gara!")
                 
                 time.sleep(0.5)
 
         except Exception as e:
-            print(f"   ❌ Errore sull'evento {id_comp}: {e}")
-
-if __name__ == "__main__":
-    spider_atleti_master_con_tempo()
