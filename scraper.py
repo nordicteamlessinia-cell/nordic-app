@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+import re
 from bs4 import BeautifulSoup
 from supabase import create_client
 
@@ -49,39 +50,52 @@ def calcola_stagione_fisi(data_gara):
         return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: SPIDER DEI CALENDARI (Popola la tabella Gare)
+# 🗓️ FASE 1: SPIDER DEI CALENDARI (BULLDOZER MODE)
 # =====================================================================
 def spider_calendari_nazionale():
     print("\n--- 📅 INIZIO DOWNLOAD CALENDARI NAZIONALI ---")
     
     for nome_comitato, slug_sito in COMITATI_URL.items():
         print(f"\n🌍 Cerco le gare per il comitato: {nome_comitato}")
+        
+        # 💡 NOTA: Se vuoi solo le gare di Fondo, puoi aggiungere ?d=178 alla fine di questo URL
         url_calendario = f"https://comitati.fisi.org/{slug_sito}/calendario/"
         
         try:
             res = requests.get(url_calendario, headers=HEADERS, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # Troviamo tutte le righe della tabella del calendario
-            righe = soup.find_all('tr')
+            # Troviamo tutti i link cliccabili nella pagina
+            links = soup.find_all('a', href=True)
             batch_gare = []
+            id_gia_visti = set()
             
-            for riga in righe:
-                colonne = riga.find_all('td')
-                if len(colonne) < 5: 
-                    continue
-                
-                # Cerchiamo il link che contiene l'ID della competizione
-                link_tag = riga.find('a', href=True)
-                if not link_tag or 'idComp=' not in link_tag['href']:
-                    continue
-                
-                # Estraiamo i dati della gara
-                try:
-                    id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
-                    data_g = colonne[0].get_text(strip=True)
-                    luogo_g = colonne[1].get_text(strip=True)
-                    nome_g = colonne[2].get_text(strip=True)
+            for link in links:
+                href = link['href']
+                if 'idComp=' in href:
+                    id_comp = href.split('idComp=')[1].split('&')[0]
+                    
+                    # Evitiamo i doppioni
+                    if id_comp in id_gia_visti: continue
+                    id_gia_visti.add(id_comp)
+                    
+                    # Estraiamo tutto il testo della "Card"
+                    testo_card = link.get_text(separator=" | ", strip=True)
+                    if len(testo_card) < 10:
+                        testo_card = link.parent.get_text(separator=" | ", strip=True)
+                        if len(testo_card) < 10:
+                            testo_card = link.parent.parent.get_text(separator=" | ", strip=True)
+                    
+                    # 1. Troviamo la Data con una Regex infallibile
+                    match_data = re.search(r'\d{2}/\d{2}/\d{4}', testo_card)
+                    data_g = match_data.group(0) if match_data else "N/D"
+                    
+                    # 2. Puliamo il nome e luogo (prendiamo le stringhe più lunghe)
+                    pezzi = [p.strip() for p in testo_card.split('|') if len(p.strip()) > 2]
+                    
+                    # Logica base: la disciplina di solito è il primo, il luogo il secondo
+                    nome_g = pezzi[2] if len(pezzi) > 2 else "Gara FISI"
+                    luogo_g = pezzi[1] if len(pezzi) > 1 else "Italia"
                     
                     batch_gare.append({
                         "id_gara_fisi": id_comp,
@@ -90,8 +104,6 @@ def spider_calendari_nazionale():
                         "gara_nome": nome_g,
                         "comitato": nome_comitato # 🎯 ASSEGNAZIONE FONDAMENTALE DEL COMITATO
                     })
-                except:
-                    continue
             
             # Salviamo nel database
             if batch_gare:
@@ -100,14 +112,13 @@ def spider_calendari_nazionale():
             else:
                 print(f"   ⏩ Nessuna gara trovata nel calendario {nome_comitato}.")
                 
-            time.sleep(0.5) # Pausa gentile per il server
+            time.sleep(0.5) 
             
         except Exception as e:
             print(f"   ❌ Errore scaricando il calendario di {nome_comitato}: {e}")
 
-
 # =====================================================================
-# ⛷️ FASE 2: SPIDER DEGLI ATLETI (Popola la tabella Risultati)
+# ⛷️ FASE 2: SPIDER DEGLI ATLETI
 # =====================================================================
 def spider_atleti_master_con_tempo():
     print("\n--- 📂 RECUPERO LE GARE DAL DATABASE... ---")
@@ -196,8 +207,5 @@ def spider_atleti_master_con_tempo():
             print(f"   ❌ Errore sull'evento {id_comp}: {e}")
 
 if __name__ == "__main__":
-    # 1. Trova tutte le gare di tutti i comitati e le salva in DB
     spider_calendari_nazionale()
-    
-    # 2. Legge il DB e scarica i tempi/posizioni degli atleti
     spider_atleti_master_con_tempo()
