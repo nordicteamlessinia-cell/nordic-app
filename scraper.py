@@ -129,3 +129,7 @@ def spider_atleti_master_con_tempo():
                 time.sleep(0.5)
 
         except Exception as e:
+            print(f"   ❌ Errore sull'evento {id_comp}: {e}")
+
+if __name__ == "__main__":
+    spider_atleti_master_con_tempo()
