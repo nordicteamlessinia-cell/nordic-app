@@ -186,4 +186,18 @@ def spider_atleti_master_con_tempo():
                     else:
                         i += 1
                 
-                if
+                if batch_atleti:
+                    supabase.table("Risultati").upsert(batch_atleti).execute()
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti per ID {id_g}")
+                
+                time.sleep(0.5)
+
+        except Exception as e:
+            print(f"   ❌ Errore sull'evento {id_comp}: {e}")
+
+if __name__ == "__main__":
+    # 1. Trova tutte le gare di tutti i comitati e le salva in DB
+    spider_calendari_nazionale()
+    
+    # 2. Legge il DB e scarica i tempi/posizioni degli atleti
+    spider_atleti_master_con_tempo()
