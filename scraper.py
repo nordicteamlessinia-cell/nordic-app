@@ -13,7 +13,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ DIZIONARIO NAZIONALE (Nome nel DB -> Slug esatto dell'URL)
+# 🗺️ DIZIONARIO NAZIONALE
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -53,10 +53,7 @@ def avvia_estrazione_calendari_nazionale():
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
     
-    # La FISI fa scattare la nuova stagione a Giugno. 
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
-    
-    # Crea da solo la lista (es. da 2020 a 2026, l'anno prossimo fino al 2027, ecc.)
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
@@ -67,7 +64,6 @@ def avvia_estrazione_calendari_nazionale():
         for anno in stagioni_da_scaricare:
             print(f"   ⏳ Cerco stagione agonistica {anno}...")
             
-            # Calcoliamo dinamicamente le date (es: stagione 2020 = 01/06/2019 - 30/05/2020)
             data_inizio = f"01/06/{anno - 1}"
             data_fine = f"30/05/{anno}"
             
@@ -75,9 +71,9 @@ def avvia_estrazione_calendari_nazionale():
                 "action": "competizioni_get_all",
                 "offset": 0,
                 "limit": 100,
-                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
+                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/?dis=F", # Diciamo a WordPress che siamo nella pagina Fondo
                 "idStagione": str(anno), 
-                "disciplina": "", 
+                "disciplina": "F", # 🎯 FILTRO NATIVO DEL SERVER: 'F' sta per Fondo!
                 "dataInizio": data_inizio,
                 "dataFine": data_fine
             }
@@ -92,11 +88,7 @@ def avvia_estrazione_calendari_nazionale():
                     if not data: break
 
                     for item in data:
-                        dati_stringa = str(item).upper()
-                        # FILTRO INFALLIBILE PER IL FONDO
-                        if "FONDO" not in dati_stringa and "NORDICO" not in dati_stringa and "CROSS COUNTRY" not in dati_stringa:
-                            continue
-                            
+                        # Niente più filtri testuali distruttivi! Salviamo i dati direttamente.
                         record = {
                             "id_gara_fisi": str(item.get("idCompetizione")), 
                             "gara_nome": item.get("nome"),
@@ -107,17 +99,17 @@ def avvia_estrazione_calendari_nazionale():
                         all_gare_comitato.append(record)
                         
                     params["offset"] += params["limit"]
-                    time.sleep(0.2) # Piccola pausa per non stressare il server
+                    time.sleep(0.2) 
 
             except Exception as e:
                 print(f"   ❌ ERRORE stagione {anno} su {nome_comitato}: {e}")
 
-        # Finito il ciclo degli anni per questo comitato, salviamo in blocco!
+        # Salvataggio nel DB
         if all_gare_comitato:
             supabase.table("Gare").upsert(all_gare_comitato).execute()
             print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE TOTALI PER {nome_comitato}")
         else:
-            print(f"   ⏩ Nessuna gara di FONDO trovata per {nome_comitato}.")
+            print(f"   ⏩ Nessuna gara trovata per {nome_comitato}.")
             
         time.sleep(0.5)
 
