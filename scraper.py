@@ -43,22 +43,21 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Tramite API AJAX JSON)
+# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Solo Sci di Fondo!)
 # =====================================================================
 def avvia_estrazione_calendari_nazionale():
-    print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI ---")
+    print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI (SOLO FONDO) ---")
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Estrazione calendario per: {nome_comitato}...")
         
-        # Parametri per l'API nascosta
         params = {
             "action": "competizioni_get_all",
             "offset": 0,
             "limit": 100,
-            "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", # URL Dinamico!
+            "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
             "idStagione": "2025", 
-            "disciplina": "", # Lasciato vuoto come nel tuo script originale
+            "disciplina": "", 
             "dataInizio": "01/06/2024",
             "dataFine": "30/05/2026"
         }
@@ -75,12 +74,21 @@ def avvia_estrazione_calendari_nazionale():
                 if not data: break
 
                 for item in data:
+                    # 🎯 IL FILTRO INFALLIBILE PER IL FONDO
+                    # Leggiamo l'intero blocco dati e lo trasformiamo in maiuscolo
+                    dati_stringa = str(item).upper()
+                    
+                    # Se non si parla di Fondo o Nordico, saltiamo la gara (addio Sci Alpino!)
+                    if "FONDO" not in dati_stringa and "NORDICO" not in dati_stringa and "CROSS COUNTRY" not in dati_stringa:
+                        continue
+                        
                     record = {
                         "id_gara_fisi": str(item.get("idCompetizione")), 
                         "gara_nome": item.get("nome"),
-                        "luogo": item.get("comune"), # Decommentato per la Fase 2
-                        "data_gara": item.get("dataInizio"), # Decommentato per la Fase 2
-                        "comitato": nome_comitato # 🎯 IL TASSELLO FONDAMENTALE AGGIUNTO
+                        "luogo": item.get("comune"), 
+                        "data_gara": item.get("dataInizio"), 
+                        "comitato": nome_comitato, 
+                        "disciplina": "Sci di Fondo" # Specifichiamo la disciplina per sicurezza
                     }
                     all_gare.append(record)
                     
@@ -88,9 +96,9 @@ def avvia_estrazione_calendari_nazionale():
 
             if all_gare:
                 supabase.table("Gare").upsert(all_gare).execute()
-                print(f"   ✅ SALVATI {len(all_gare)} RECORD PER {nome_comitato}")
+                print(f"   ✅ SALVATE {len(all_gare)} GARE DI FONDO PER {nome_comitato}")
             else:
-                print(f"   ⏩ Nessuna gara trovata per {nome_comitato}")
+                print(f"   ⏩ Nessuna gara di FONDO trovata per {nome_comitato}")
                 
             time.sleep(0.5)
                 
@@ -98,16 +106,15 @@ def avvia_estrazione_calendari_nazionale():
             print(f"   ❌ ERRORE su {nome_comitato}: {e}")
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (HTML Parsing)
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (Dalle Classifiche)
 # =====================================================================
 def spider_atleti_master_con_tempo():
     print("\n--- 📂 RECUPERO LE GARE DAL DATABASE... ---")
     
-    # 🎯 Ora leggiamo anche il 'comitato' salvato dalla Fase 1
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI (CON TEMPO GARA) --- (Trovate {len(lista_gare)} gare)")
+    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare totali nel DB)")
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
@@ -126,7 +133,6 @@ def spider_atleti_master_con_tempo():
         stagione_fisi = calcola_stagione_fisi(data_g)
         print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} ({nome_comitato} - Data: {data_g})")
         
-        # URL Dinamico per il comitato corretto
         url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
         
         try:
@@ -144,7 +150,6 @@ def spider_atleti_master_con_tempo():
                 r_data = requests.get(url_gara, headers=HEADERS, timeout=15)
                 gara_soup = BeautifulSoup(r_data.text, 'html.parser')
                 
-                # ESTRAZIONE CATEGORIA E SPECIALITÀ
                 testi_completi = list(gara_soup.stripped_strings)
                 cat, spec = "", ""
                 for i, t in enumerate(testi_completi):
@@ -157,7 +162,6 @@ def spider_atleti_master_con_tempo():
                             
                 categoria_finale = f"{spec} - {cat}".strip(" -") if spec or cat else "Generale"
 
-                # ESTRAZIONE ATLETI E TEMPI
                 elementi_atleti = gara_soup.find_all('span', class_='x-text-content-text-primary')
                 testi_atleti = [e.get_text(strip=True) for e in elementi_atleti if len(e.get_text(strip=True)) > 0]
                 
@@ -176,7 +180,7 @@ def spider_atleti_master_con_tempo():
                             "gara_nome": nome_g,
                             "luogo": luogo_g,
                             "data_gara": data_g,
-                            "comitato": nome_comitato # 🎯 COMITATO ASSEGNATO ALL'ATLETA
+                            "comitato": nome_comitato 
                         })
                         i += 8
                     else:
@@ -192,6 +196,5 @@ def spider_atleti_master_con_tempo():
             print(f"   ❌ Errore sull'evento {id_comp}: {e}")
 
 if __name__ == "__main__":
-    # Esegue in ordine le due fasi dei tuoi script originali
     avvia_estrazione_calendari_nazionale()
     spider_atleti_master_con_tempo()
