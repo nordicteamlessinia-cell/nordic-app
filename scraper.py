@@ -66,19 +66,22 @@ def spider_calendari_fondo_nazionale():
         percorso_base = "calendario"
         
         while True:
-            # URL Standard per la paginazione di WordPress
-            url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?paged={pagina_corrente}"
+            # 🟢 IL FIX: WordPress odia "?paged=1", quindi la Pagina 1 deve essere "liscia"
+            if pagina_corrente == 1:
+                url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/"
+            else:
+                url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?paged={pagina_corrente}"
             
             try:
                 res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                 
-                # Auto-correzione del link se il comitato usa "calendario-gare" (succede solo alla pagina 1)
+                # Auto-correzione se il comitato usa "calendario-gare" invece di "calendario" (solo alla pagina 1)
                 if res.status_code == 404 and pagina_corrente == 1 and percorso_base == "calendario":
                     percorso_base = "calendario-gare"
-                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?paged={pagina_corrente}"
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/"
                     res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                 
-                # Se dà ANCORA 404, significa che abbiamo superato l'ultima pagina disponibile! Interrompiamo il ciclo.
+                # Se dà ANCORA 404, significa che le pagine successive non esistono (es. non c'è una Pagina 3).
                 if res.status_code == 404:
                     break
                     
@@ -99,10 +102,10 @@ def spider_calendari_fondo_nazionale():
                     link_tag = riga.find('a', href=True)
                     if not link_tag or 'idComp=' not in link_tag['href']: continue
                     
-                    # 🎯 IL FILTRO MAGICO: Salviamo solo se nella riga si parla di Fondo
+                    # 🎯 IL FILTRO INFALLIBILE: Salviamo solo se nella riga si parla di Fondo o Nordico
                     testo_riga_intero = riga.get_text().upper()
                     if "FONDO" not in testo_riga_intero and "NORDICO" not in testo_riga_intero:
-                        continue # Salta tutto lo Sci Alpino, Snowboard, ecc.
+                        continue 
                     
                     try:
                         id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
@@ -126,9 +129,8 @@ def spider_calendari_fondo_nazionale():
                     except Exception as e:
                         continue
                 
-                # Se non ci sono più righe con 'idComp', abbiamo finito la tabella
+                # Se abbiamo letto la tabella e non c'è NESSUNA NUOVA GARA (di nessuna disciplina), fermati
                 if not nuove_gare_nella_pagina and len(batch_gare) == 0:
-                    # Controlliamo se ci sono righe in generale. Se no, fermati.
                     if len(righe) < 2: 
                         break
                     
