@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+import datetime
 from bs4 import BeautifulSoup
 from supabase import create_client
 
@@ -43,64 +44,82 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Solo Sci di Fondo!)
+# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Automatica dal 2020 all'infinito)
 # =====================================================================
 def avvia_estrazione_calendari_nazionale():
-    print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI (SOLO FONDO) ---")
+    print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI STORICI ---")
+    
+    # 🤖 CALCOLO AUTOMATICO DELL'ANNO
+    anno_corrente = datetime.datetime.now().year
+    mese_corrente = datetime.datetime.now().month
+    
+    # La FISI fa scattare la nuova stagione a Giugno. 
+    anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
+    
+    # Crea da solo la lista (es. da 2020 a 2026, l'anno prossimo fino al 2027, ecc.)
+    stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Estrazione calendario per: {nome_comitato}...")
         
-        params = {
-            "action": "competizioni_get_all",
-            "offset": 0,
-            "limit": 100,
-            "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
-            "idStagione": "2025", 
-            "disciplina": "", 
-            "dataInizio": "01/06/2024",
-            "dataFine": "30/05/2026"
-        }
-
-        all_gare = []
+        all_gare_comitato = []
         
-        try:
-            while True:
-                r = requests.get(BASE_URL_AJAX, params=params, headers=HEADERS, timeout=30)
-                if r.status_code != 200:
-                    break
-                    
-                data = r.json()
-                if not data: break
-
-                for item in data:
-                    # 🎯 IL FILTRO INFALLIBILE PER IL FONDO
-                    dati_stringa = str(item).upper()
-                    if "FONDO" not in dati_stringa and "NORDICO" not in dati_stringa and "CROSS COUNTRY" not in dati_stringa:
-                        continue
+        for anno in stagioni_da_scaricare:
+            print(f"   ⏳ Cerco stagione agonistica {anno}...")
+            
+            # Calcoliamo dinamicamente le date (es: stagione 2020 = 01/06/2019 - 30/05/2020)
+            data_inizio = f"01/06/{anno - 1}"
+            data_fine = f"30/05/{anno}"
+            
+            params = {
+                "action": "competizioni_get_all",
+                "offset": 0,
+                "limit": 100,
+                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
+                "idStagione": str(anno), 
+                "disciplina": "", 
+                "dataInizio": data_inizio,
+                "dataFine": data_fine
+            }
+            
+            try:
+                while True:
+                    r = requests.get(BASE_URL_AJAX, params=params, headers=HEADERS, timeout=30)
+                    if r.status_code != 200:
+                        break
                         
-                    # Creazione del record SENZA la colonna disciplina
-                    record = {
-                        "id_gara_fisi": str(item.get("idCompetizione")), 
-                        "gara_nome": item.get("nome"),
-                        "luogo": item.get("comune"), 
-                        "data_gara": item.get("dataInizio"), 
-                        "comitato": nome_comitato 
-                    }
-                    all_gare.append(record)
-                    
-                params["offset"] += params["limit"]
+                    data = r.json()
+                    if not data: break
 
-            if all_gare:
-                supabase.table("Gare").upsert(all_gare).execute()
-                print(f"   ✅ SALVATE {len(all_gare)} GARE DI FONDO PER {nome_comitato}")
-            else:
-                print(f"   ⏩ Nessuna gara di FONDO trovata per {nome_comitato}")
-                
-            time.sleep(0.5)
-                
-        except Exception as e:
-            print(f"   ❌ ERRORE su {nome_comitato}: {e}")
+                    for item in data:
+                        dati_stringa = str(item).upper()
+                        # FILTRO INFALLIBILE PER IL FONDO
+                        if "FONDO" not in dati_stringa and "NORDICO" not in dati_stringa and "CROSS COUNTRY" not in dati_stringa:
+                            continue
+                            
+                        record = {
+                            "id_gara_fisi": str(item.get("idCompetizione")), 
+                            "gara_nome": item.get("nome"),
+                            "luogo": item.get("comune"), 
+                            "data_gara": item.get("dataInizio"), 
+                            "comitato": nome_comitato 
+                        }
+                        all_gare_comitato.append(record)
+                        
+                    params["offset"] += params["limit"]
+                    time.sleep(0.2) # Piccola pausa per non stressare il server
+
+            except Exception as e:
+                print(f"   ❌ ERRORE stagione {anno} su {nome_comitato}: {e}")
+
+        # Finito il ciclo degli anni per questo comitato, salviamo in blocco!
+        if all_gare_comitato:
+            supabase.table("Gare").upsert(all_gare_comitato).execute()
+            print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE TOTALI PER {nome_comitato}")
+        else:
+            print(f"   ⏩ Nessuna gara di FONDO trovata per {nome_comitato}.")
+            
+        time.sleep(0.5)
 
 # =====================================================================
 # ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (Dalle Classifiche)
