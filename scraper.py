@@ -1,7 +1,6 @@
 import os
 import requests
 import time
-import re
 from bs4 import BeautifulSoup
 from supabase import create_client
 
@@ -12,7 +11,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-# 🗺️ DIZIONARIO DEFINITIVO CON I PERCORSI WEB ESATTI E VERIFICATI
+# 🗺️ DIZIONARIO DEFINITIVO DEGLI SLUG WEB
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -51,7 +50,7 @@ def calcola_stagione_fisi(data_gara):
         return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: SPIDER DEI CALENDARI (Solo Fondo + Paginazione)
+# 🗓️ FASE 1: SPIDER DEI CALENDARI (Paginazione + Filtro Testuale Fondo)
 # =====================================================================
 def spider_calendari_fondo_nazionale():
     print("\n--- 📅 FASE 1: DOWNLOAD CALENDARI NAZIONALI (FONDO) ---")
@@ -63,19 +62,23 @@ def spider_calendari_fondo_nazionale():
         gare_totali_comitato = 0
         id_gia_visti = set()
         
+        # Determiniamo il percorso base (calendario o calendario-gare)
+        percorso_base = "calendario"
+        
         while True:
-            # Aggiungiamo il filtro per il Fondo (?dis=F) e la Paginazione
-            url_calendario = f"https://comitati.fisi.org/{slug_sito}/calendario/?paged={pagina_corrente}&dis=F"
+            # URL Standard per la paginazione di WordPress
+            url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?paged={pagina_corrente}"
             
             try:
                 res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                 
-                # Se il sito usa "calendario-gare" invece di "calendario", correggiamo al volo
-                if res.status_code == 404:
-                    url_alternativo = f"https://comitati.fisi.org/{slug_sito}/calendario-gare/?paged={pagina_corrente}&dis=F"
-                    res = requests.get(url_alternativo, headers=HEADERS, timeout=15)
+                # Auto-correzione del link se il comitato usa "calendario-gare" (succede solo alla pagina 1)
+                if res.status_code == 404 and pagina_corrente == 1 and percorso_base == "calendario":
+                    percorso_base = "calendario-gare"
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?paged={pagina_corrente}"
+                    res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                 
-                # Se dà ANCORA 404, significa che le pagine sono finite (es. non c'è una Pagina 3)
+                # Se dà ANCORA 404, significa che abbiamo superato l'ultima pagina disponibile! Interrompiamo il ciclo.
                 if res.status_code == 404:
                     break
                     
@@ -96,10 +99,14 @@ def spider_calendari_fondo_nazionale():
                     link_tag = riga.find('a', href=True)
                     if not link_tag or 'idComp=' not in link_tag['href']: continue
                     
+                    # 🎯 IL FILTRO MAGICO: Salviamo solo se nella riga si parla di Fondo
+                    testo_riga_intero = riga.get_text().upper()
+                    if "FONDO" not in testo_riga_intero and "NORDICO" not in testo_riga_intero:
+                        continue # Salta tutto lo Sci Alpino, Snowboard, ecc.
+                    
                     try:
                         id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
                         
-                        # Evita i duplicati nella stessa scansione
                         if id_comp in id_gia_visti: continue
                         id_gia_visti.add(id_comp)
                         nuove_gare_nella_pagina = True
@@ -114,31 +121,33 @@ def spider_calendari_fondo_nazionale():
                             "luogo": luogo_g,
                             "gara_nome": nome_g,
                             "comitato": nome_comitato,
-                            "disciplina": "Sci di Fondo" # 🎯 Etichetta per sicurezza
+                            "disciplina": "Sci di Fondo" 
                         })
                     except Exception as e:
                         continue
                 
-                # Se in questa pagina non abbiamo trovato nessuna nuova gara, fermiamo il ciclo per questo comitato
-                if not nuove_gare_nella_pagina:
-                    break
+                # Se non ci sono più righe con 'idComp', abbiamo finito la tabella
+                if not nuove_gare_nella_pagina and len(batch_gare) == 0:
+                    # Controlliamo se ci sono righe in generale. Se no, fermati.
+                    if len(righe) < 2: 
+                        break
                     
                 if batch_gare:
                     supabase.table("Gare").upsert(batch_gare).execute()
                     gare_totali_comitato += len(batch_gare)
-                    print(f"   📄 Pagina {pagina_corrente}: Salvate {len(batch_gare)} gare...")
+                    print(f"   📄 Pagina {pagina_corrente}: Salvate {len(batch_gare)} gare di FONDO.")
                     
-                time.sleep(0.5) # Pausa gentile
+                time.sleep(0.5) 
                 pagina_corrente += 1
                 
             except Exception as e:
                 print(f"   ❌ Errore alla pagina {pagina_corrente} di {nome_comitato}: {e}")
                 break
                 
-        print(f"   🏁 Completato {nome_comitato}: {gare_totali_comitato} gare trovate in totale.")
+        print(f"   🏁 Completato {nome_comitato}: {gare_totali_comitato} gare di FONDO trovate.")
 
 # =====================================================================
-# ⛷️ FASE 2: SPIDER DEGLI ATLETI (Il tuo script originale multi-comitato)
+# ⛷️ FASE 2: SPIDER DEGLI ATLETI
 # =====================================================================
 def spider_atleti_master_con_tempo():
     print("\n--- 📂 FASE 2: RECUPERO RISULTATI ATLETI DAL DATABASE... ---")
