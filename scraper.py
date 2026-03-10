@@ -75,20 +75,17 @@ def avvia_estrazione_calendari_nazionale():
 
                 for item in data:
                     # 🎯 IL FILTRO INFALLIBILE PER IL FONDO
-                    # Leggiamo l'intero blocco dati e lo trasformiamo in maiuscolo
                     dati_stringa = str(item).upper()
-                    
-                    # Se non si parla di Fondo o Nordico, saltiamo la gara (addio Sci Alpino!)
                     if "FONDO" not in dati_stringa and "NORDICO" not in dati_stringa and "CROSS COUNTRY" not in dati_stringa:
                         continue
                         
+                    # Creazione del record SENZA la colonna disciplina
                     record = {
                         "id_gara_fisi": str(item.get("idCompetizione")), 
                         "gara_nome": item.get("nome"),
                         "luogo": item.get("comune"), 
                         "data_gara": item.get("dataInizio"), 
-                        "comitato": nome_comitato, 
-                        "disciplina": "Sci di Fondo" # Specifichiamo la disciplina per sicurezza
+                        "comitato": nome_comitato 
                     }
                     all_gare.append(record)
                     
