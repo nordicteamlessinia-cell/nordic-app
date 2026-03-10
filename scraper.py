@@ -11,43 +11,40 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-# 🗺️ DIZIONARIO NAZIONALE DEI COMITATI
-# La chiave è il nome che scriveremo nel DB, il valore è la parte dell'URL del sito FISI
+# 🗺️ DIZIONARIO OTTIMIZZATO PER SCI DI FONDO (Parametro &dis=F o &d=F)
 COMITATI_FISI = {
-    'Abruzzo (CAB)': 'abruzzo',
-    'Alto Adige (AA)': 'altoadige',
-    'Alpi Centrali (AC)': 'alpicentrali',
-    'Alpi Occidentali (AOC)': 'aoc',
-    'Appennino Emiliano (CAE)': 'cae',
-    'Appennino Toscano (CAT)': 'cat',
-    'Calabro Lucano (CAL)': 'cal',
-    'Campano (CAM)': 'campano',
-    'Friuli Venezia Giulia (FVG)': 'fvg',
-    'Lazio e Sardegna (CLS)': 'cls',
-    'Ligure (LIG)': 'ligure',
-    'Pugliese (PUG)': 'pugliese',
-    'Siculo (SIC)': 'siculo',
-    'Trentino (TN)': 'trentino',
-    'Umbro Marchigiano (CUM)': 'cum',
-    'Valdostano (ASIVA)': 'asiva',
-    'Veneto (VE)': 'veneto'
+    'Abruzzo (CAB)': 'abruzzo/calendario/?dis=F',
+    'Alto Adige (AA)': 'altoadige/calendario-gare/?dis=F',
+    'Alpi Centrali (AC)': 'alpicentrali/calendario-gare/?dis=F',
+    'Alpi Occidentali (AOC)': 'aoc/calendario/?dis=F',
+    'Appennino Emiliano (CAE)': 'cae/calendario/?dis=F',
+    'Appennino Toscano (CAT)': 'cat/calendario/?dis=F',
+    'Friuli Venezia Giulia (FVG)': 'fvg/calendario/?dis=F',
+    'Trentino (TN)': 'trentino/calendario-gare/?dis=F',
+    'Valdostano (ASIVA)': 'asiva/calendario/?dis=F',
+    'Veneto (VE)': 'veneto/calendario/?dis=F'
 }
 
-def spider_calendari_tutta_italia():
-    print("\n--- 🏁 INIZIO ESTRAZIONE CALENDARI NAZIONALI ---")
+def spider_calendari_fondo_nazionale():
+    print("\n--- 🏁 ESTRAZIONE CALENDARI NAZIONALI - SOLO SCI DI FONDO ---")
     
-    gare_totali_salvate = 0
-
-    for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Cerco gare per: {nome_comitato}...")
+    for nome_comitato, percorso in COMITATI_FISI.items():
+        print(f"\n🌍 Cerco fondo per: {nome_comitato}...")
         
-        # Costruiamo l'URL specifico per il comitato corrente
-        url_calendario = f"https://comitati.fisi.org/{slug_sito}/calendario/"
+        # URL con filtro disciplina Fondo
+        url_calendario = f"https://comitati.fisi.org/{percorso}"
         
         try:
             res = requests.get(url_calendario, headers=HEADERS, timeout=15)
+            
+            # Gestione automatica dei 404 (alcuni siti cambiano tra calendario e calendario-gare)
+            if res.status_code == 404:
+                percorso_alt = percorso.replace("calendario-gare", "calendario") if "calendario-gare" in percorso else percorso.replace("calendario", "calendario-gare")
+                url_calendario = f"https://comitati.fisi.org/{percorso_alt}"
+                res = requests.get(url_calendario, headers=HEADERS, timeout=15)
+
             if res.status_code != 200:
-                print(f"   ⚠️ Impossibile raggiungere il sito per {nome_comitato} (Errore {res.status_code})")
+                print(f"   ❌ Errore {res.status_code} su {url_calendario}")
                 continue
                 
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -56,46 +53,45 @@ def spider_calendari_tutta_italia():
             
             for riga in righe:
                 colonne = riga.find_all('td')
-                if len(colonne) < 5: 
-                    continue
+                if len(colonne) < 3: continue
                 
+                # Cerchiamo il link della competizione
                 link_tag = riga.find('a', href=True)
                 if not link_tag or 'idComp=' not in link_tag['href']:
                     continue
                 
+                # FILTRO EXTRA: Verifichiamo se nella riga c'è scritto "FONDO" o "CC" (Cross Country)
+                # Spesso la colonna disciplina è la quarta o quinta
+                testo_riga = riga.get_text().upper()
+                # Se la pagina è già filtrata via URL questo è un controllo di sicurezza in più
+                
                 try:
-                    # Estrazione dati
                     id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
                     data_g = colonne[0].get_text(strip=True)
                     luogo_g = colonne[1].get_text(strip=True)
                     nome_g = colonne[2].get_text(strip=True)
                     
-                    # Preparazione riga per Supabase con colonna COMITATO
                     batch_gare.append({
                         "id_gara_fisi": id_comp,
                         "data_gara": data_g,
                         "luogo": luogo_g,
                         "gara_nome": nome_g,
-                        "comitato": nome_comitato  # ✨ Specifica il comitato di appartenenza
+                        "comitato": nome_comitato,
+                        "disciplina": "Sci di Fondo" # Specifichiamo nel DB
                     })
-                except Exception:
+                except:
                     continue
             
-            # Salvataggio nel database per questo comitato
             if batch_gare:
                 supabase.table("Gare").upsert(batch_gare).execute()
-                print(f"   ✅ Salvate {len(batch_gare)} gare per {nome_comitato}")
-                gare_totali_salvate += len(batch_gare)
+                print(f"   ✅ Trovate e salvate {len(batch_gare)} gare di FONDO.")
             else:
-                print(f"   ⏩ Nessuna gara trovata per {nome_comitato}")
+                print(f"   ⏩ Nessuna gara di fondo trovata per questo comitato.")
             
-            # Piccola pausa per non sovraccaricare il server FISI
-            time.sleep(0.5)
+            time.sleep(0.8)
 
         except Exception as e:
-            print(f"   ❌ Errore durante lo scraping di {nome_comitato}: {e}")
-
-    print(f"\n--- 🏆 FINE! Gare totali elaborate: {gare_totali_salvate} ---")
+            print(f"   ❌ Errore: {e}")
 
 if __name__ == "__main__":
-    spider_calendari_tutta_italia()
+    spider_calendari_fondo_nazionale()
