@@ -11,8 +11,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
+BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ IL DIZIONARIO PERFETTO DELLA NOSTRA CRONOLOGIA (NON TOCCARE!)
+# 🗺️ IL DIZIONARIO PERFETTO DELLA NOSTRA CRONOLOGIA
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo/calendario',
     'Alto Adige (AA)': 'altoadige/calendario-gare',
@@ -43,10 +44,13 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: SPIDER DEI CALENDARI HTML (Il nostro filtro Infallibile)
+# 🗓️ FASE 1: SPIDER DEI CALENDARI (Trova l'ID Segreto e Scarica)
 # =====================================================================
 def spider_calendari_fondo_nazionale():
     print("\n--- 📅 FASE 1: DOWNLOAD CALENDARI STORICI (SOLO FONDO) ---")
+    
+    session = requests.Session()
+    session.headers.update(HEADERS)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
@@ -54,171 +58,53 @@ def spider_calendari_fondo_nazionale():
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
     for nome_comitato, percorso_base in COMITATI_FISI.items():
-        print(f"\n🌍 Cerco le gare per: {nome_comitato}...")
-        gare_totali_comitato = 0
+        print(f"\n🌍 Analizzo: {nome_comitato}...")
         
-        for anno in stagioni_da_scaricare:
-            pagina_corrente = 1
-            id_gia_visti = set()
+        slug_sito = percorso_base.split('/')[0]
+        url_calendario = f"https://comitati.fisi.org/{percorso_base}/"
+        
+        # 🕵️‍♂️ L'ALGORITMO HACKER: Troviamo l'ID numerico nascosto della disciplina "Fondo"
+        id_disciplina_fondo = ""
+        try:
+            res_cal = session.get(url_calendario, timeout=15)
+            soup_cal = BeautifulSoup(res_cal.text, 'html.parser')
             
-            while True:
-                # Costruiamo l'URL esatto per la pagina web
-                url_calendario = f"https://comitati.fisi.org/{percorso_base}/?d={anno}&dis=F&paged={pagina_corrente}"
-                
-                try:
-                    res = requests.get(url_calendario, headers=HEADERS, timeout=15)
-                    
-                    if res.status_code == 404 or res.status_code != 200:
-                        break # Pagine finite per quest'anno
-                        
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    righe = soup.find_all('tr')
-                    
-                    batch_gare = []
-                    nuove_gare_nella_pagina = False
-                    
-                    for riga in righe:
-                        colonne = riga.find_all('td')
-                        if len(colonne) < 3: continue
-                        
-                        link_tag = riga.find('a', href=True)
-                        if not link_tag or 'idComp=' not in link_tag['href']: continue
-                        
-                        # 🎯 IL NOSTRO FILTRO INFALLIBILE!
-                        testo_riga_intero = riga.get_text().upper()
-                        if "FONDO" not in testo_riga_intero and "NORDICO" not in testo_riga_intero and "CROSS COUNTRY" not in testo_riga_intero:
-                            continue 
-                        
-                        try:
-                            id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
-                            
-                            if id_comp in id_gia_visti: continue
-                            id_gia_visti.add(id_comp)
-                            nuove_gare_nella_pagina = True
-                            
-                            data_g = colonne[0].get_text(strip=True)
-                            luogo_g = colonne[1].get_text(strip=True) if len(colonne) > 1 else "N/D"
-                            nome_g = colonne[2].get_text(strip=True) if len(colonne) > 2 else "Gara FISI"
-                            
-                            batch_gare.append({
-                                "id_gara_fisi": id_comp,
-                                "data_gara": data_g,
-                                "luogo": luogo_g,
-                                "gara_nome": nome_g,
-                                "comitato": nome_comitato
-                            })
-                        except Exception:
-                            continue
-                    
-                    # Se non c'è nessuna gara nuova in questa pagina, o la tabella è vuota, esci dal ciclo while
-                    if not nuove_gare_nella_pagina and len(batch_gare) == 0:
+            # Cerca nel menu a tendina delle discipline
+            for opt in soup_cal.find_all('option'):
+                testo = opt.text.upper()
+                if "FONDO" in testo or "NORDICO" in testo:
+                    val = opt.get('value')
+                    if val and val.strip() != "" and val != "-1" and val.upper() != "TUTTE":
+                        id_disciplina_fondo = val.strip()
                         break
                         
-                    if batch_gare:
-                        supabase.table("Gare").upsert(batch_gare).execute()
-                        gare_totali_comitato += len(batch_gare)
-                        print(f"   📄 Anno {anno} - Pagina {pagina_corrente}: Salvate {len(batch_gare)} gare di FONDO.")
-                        
-                    time.sleep(0.3) 
-                    pagina_corrente += 1
-                    
-                except Exception as e:
-                    break
-                    
-        print(f"   🏁 Completato {nome_comitato}: {gare_totali_comitato} gare di FONDO trovate dal 2020 ad oggi.")
-
-# =====================================================================
-# ⛷️ FASE 2: SPIDER DEGLI ATLETI
-# =====================================================================
-def spider_atleti_master_con_tempo():
-    print("\n--- 📂 FASE 2: RECUPERO RISULTATI ATLETI DAL DATABASE... ---")
-    gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
-    lista_gare = gare_db.data
-
-    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare nel DB)")
-
-    # Creiamo un dizionario inverso rapido per trovare lo slug base (es: 'abruzzo' partendo da 'Abruzzo (CAB)')
-    slug_rapidi = {k: v.split('/')[0] for k, v in COMITATI_FISI.items()}
-
-    for gara in lista_gare:
-        id_comp = gara.get('id_gara_fisi')
-        data_g = gara.get('data_gara')
-        nome_g = gara.get('gara_nome')
-        luogo_g = gara.get('luogo')
-        nome_comitato = gara.get('comitato')
-        
-        if not id_comp or not nome_comitato or nome_comitato == 'Generico': 
-            continue
-            
-        slug_sito = slug_rapidi.get(nome_comitato)
-        if not slug_sito: 
-            continue
-        
-        stagione_fisi = calcola_stagione_fisi(data_g)
-        
-        url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
-        
-        try:
-            res = requests.get(url_comp, headers=HEADERS, timeout=15)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            links = soup.find_all('a', href=True)
-            id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
-            
-            if not id_sottogare:
-                continue
-
-            print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} ({nome_comitato} | Data: {data_g})")
-
-            for id_g in id_sottogare:
-                url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
-                r_data = requests.get(url_gara, headers=HEADERS, timeout=15)
-                gara_soup = BeautifulSoup(r_data.text, 'html.parser')
-                
-                testi_completi = list(gara_soup.stripped_strings)
-                cat, spec = "", ""
-                for i, t in enumerate(testi_completi):
-                    testo_upper = t.upper()
-                    if "CATEGORIA" == testo_upper and i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "POS.":
-                        cat = testi_completi[i+1]
-                    if "SPECIALITÀ" in testo_upper or "SPECIALITA" in testo_upper:
-                        if i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "CATEGORIA":
-                            spec = testi_completi[i+1]
-                            
-                categoria_finale = f"{spec} - {cat}".strip(" -") if spec or cat else "Generale"
-
-                elementi_atleti = gara_soup.find_all('span', class_='x-text-content-text-primary')
-                testi_atleti = [e.get_text(strip=True) for e in elementi_atleti if len(e.get_text(strip=True)) > 0]
-                
-                batch_atleti = []
-                i = 0
-                while i < len(testi_atleti) - 7:
-                    if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
-                        batch_atleti.append({
-                            "id_gara_fisi": id_g, 
-                            "id_comp_collegata": id_comp, 
-                            "posizione": int(testi_atleti[i]),
-                            "atleta_nome": testi_atleti[i+2],
-                            "societa": testi_atleti[i+4],
-                            "tempo": testi_atleti[i+5], 
-                            "categoria": categoria_finale,
-                            "gara_nome": nome_g,
-                            "luogo": luogo_g,
-                            "data_gara": data_g,
-                            "comitato": nome_comitato 
-                        })
-                        i += 8
-                    else:
-                        i += 1
-                
-                if batch_atleti:
-                    supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti per la gara!")
-                
-                time.sleep(0.3)
-
-        except Exception as e:
+            # Se il menu a tendina non c'è, cerca nei link della pagina
+            if not id_disciplina_fondo:
+                for link in soup_cal.find_all('a', href=True):
+                    testo = link.text.upper()
+                    if "FONDO" in testo or "NORDICO" in testo:
+                        import urllib.parse
+                        parsed = urllib.parse.urlparse(link['href'])
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        if 'd' in qs: id_disciplina_fondo = qs['d'][0]; break
+                        if 'disciplina' in qs: id_disciplina_fondo = qs['disciplina'][0]; break
+        except Exception:
             pass
+            
+        if id_disciplina_fondo:
+            print(f"   🔑 Trovato ID Segreto Fondo per {slug_sito}: '{id_disciplina_fondo}'")
+        else:
+            print(f"   ⚠️ ID non trovato, scarico tutto e filtro manualmente...")
 
-if __name__ == "__main__":
-    spider_calendari_fondo_nazionale()
-    spider_atleti_master_con_tempo()
+        all_gare_fondo = []
+        
+        for anno in stagioni_da_scaricare:
+            params = {
+                "action": "competizioni_get_all",
+                "offset": 0,
+                "limit": 100,
+                "url": url_calendario, 
+                "idStagione": str(anno), 
+                "disciplina": id_disciplina_fondo, # 🎯 USIAMO IL CODICE MAGICO (Scarica SOLO fondo!)
+                "dataInizio": "01/01/2010",
+                "dataFine": "31/12/203
