@@ -12,25 +12,25 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 
-# 🗺️ DIZIONARIO NAZIONALE DEGLI SLUG WEB
+# 🗺️ IL DIZIONARIO PERFETTO DELLA NOSTRA CRONOLOGIA (NON TOCCARE!)
 COMITATI_FISI = {
-    'Abruzzo (CAB)': 'abruzzo',
-    'Alto Adige (AA)': 'alto-adige',           
-    'Alpi Centrali (AC)': 'alpi-centrali',     
-    'Alpi Occidentali (AOC)': 'alpi-occidentali', 
-    'Appennino Emiliano (CAE)': 'appennino-emiliano', 
-    'Appennino Toscano (CAT)': 'appennino-toscano',   
-    'Calabro Lucano (CAL)': 'calabro-lucano',
-    'Campano (CAM)': 'campano',
-    'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
-    'Lazio e Sardegna (CLS)': 'lazio-sardegna',
-    'Ligure (LIG)': 'ligure',
-    'Pugliese (PUG)': 'pugliese',
-    'Siculo (SIC)': 'siculo',
-    'Trentino (TN)': 'trentino',
-    'Umbro Marchigiano (CUM)': 'umbro-marchigiano',
-    'Valdostano (ASIVA)': 'asiva',
-    'Veneto (VE)': 'veneto'
+    'Abruzzo (CAB)': 'abruzzo/calendario',
+    'Alto Adige (AA)': 'altoadige/calendario-gare',
+    'Alpi Centrali (AC)': 'alpicentrali/calendario-gare',
+    'Alpi Occidentali (AOC)': 'aoc/calendario',
+    'Appennino Emiliano (CAE)': 'cae/calendario',
+    'Appennino Toscano (CAT)': 'cat/calendario',
+    'Calabro Lucano (CAL)': 'cal/calendario',
+    'Campano (CAM)': 'campano/calendario',
+    'Friuli Venezia Giulia (FVG)': 'fvg/calendario',
+    'Lazio e Sardegna (CLS)': 'cls/calendario',
+    'Ligure (LIG)': 'ligure/calendario',
+    'Pugliese (PUG)': 'pugliese/calendario',
+    'Siculo (SIC)': 'siculo/calendario',
+    'Trentino (TN)': 'trentino/calendario-gare',
+    'Umbro Marchigiano (CUM)': 'cum/calendario',
+    'Valdostano (ASIVA)': 'asiva/calendario',
+    'Veneto (VE)': 'veneto/calendario'
 }
 
 def calcola_stagione_fisi(data_gara):
@@ -53,35 +53,23 @@ def spider_calendari_fondo_nazionale():
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
-    for nome_comitato, slug_sito in COMITATI_FISI.items():
+    for nome_comitato, percorso_base in COMITATI_FISI.items():
         print(f"\n🌍 Cerco le gare per: {nome_comitato}...")
-        
         gare_totali_comitato = 0
         
         for anno in stagioni_da_scaricare:
             pagina_corrente = 1
             id_gia_visti = set()
-            percorso_base = "calendario"
             
             while True:
-                # 🎯 IL TRUCCO CORRETTO: Uniamo anno (?d=), disciplina (&dis=F) e paginazione!
-                if pagina_corrente == 1:
-                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F"
-                else:
-                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F&paged={pagina_corrente}"
+                # Costruiamo l'URL esatto per la pagina web
+                url_calendario = f"https://comitati.fisi.org/{percorso_base}/?d={anno}&dis=F&paged={pagina_corrente}"
                 
                 try:
                     res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                     
-                    # Fallback automatico se il sito usa "calendario-gare"
-                    if res.status_code == 404 and pagina_corrente == 1 and percorso_base == "calendario":
-                        percorso_base = "calendario-gare"
-                        url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F"
-                        res = requests.get(url_calendario, headers=HEADERS, timeout=15)
-                    
-                    # Se dà ANCORA 404, abbiamo finito le pagine di questo anno
                     if res.status_code == 404 or res.status_code != 200:
-                        break 
+                        break # Pagine finite per quest'anno
                         
                     soup = BeautifulSoup(res.text, 'html.parser')
                     righe = soup.find_all('tr')
@@ -122,8 +110,8 @@ def spider_calendari_fondo_nazionale():
                         except Exception:
                             continue
                     
-                    # Se non c'è nessuna nuova gara in questa pagina, interrompi la paginazione per questo anno
-                    if not nuove_gare_nella_pagina:
+                    # Se non c'è nessuna gara nuova in questa pagina, o la tabella è vuota, esci dal ciclo while
+                    if not nuove_gare_nella_pagina and len(batch_gare) == 0:
                         break
                         
                     if batch_gare:
@@ -131,7 +119,7 @@ def spider_calendari_fondo_nazionale():
                         gare_totali_comitato += len(batch_gare)
                         print(f"   📄 Anno {anno} - Pagina {pagina_corrente}: Salvate {len(batch_gare)} gare di FONDO.")
                         
-                    time.sleep(0.5) 
+                    time.sleep(0.3) 
                     pagina_corrente += 1
                     
                 except Exception as e:
@@ -149,6 +137,9 @@ def spider_atleti_master_con_tempo():
 
     print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare nel DB)")
 
+    # Creiamo un dizionario inverso rapido per trovare lo slug base (es: 'abruzzo' partendo da 'Abruzzo (CAB)')
+    slug_rapidi = {k: v.split('/')[0] for k, v in COMITATI_FISI.items()}
+
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
         data_g = gara.get('data_gara')
@@ -159,7 +150,7 @@ def spider_atleti_master_con_tempo():
         if not id_comp or not nome_comitato or nome_comitato == 'Generico': 
             continue
             
-        slug_sito = COMITATI_FISI.get(nome_comitato)
+        slug_sito = slug_rapidi.get(nome_comitato)
         if not slug_sito: 
             continue
         
