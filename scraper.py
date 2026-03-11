@@ -44,7 +44,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Automatica)
+# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Aspirapolvere Totale)
 # =====================================================================
 def avvia_estrazione_calendari_nazionale():
     print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI STORICI ---")
@@ -59,6 +59,8 @@ def avvia_estrazione_calendari_nazionale():
         all_gare_comitato = []
         
         for anno in stagioni_da_scaricare:
+            # print(f"   ⏳ Cerco stagione agonistica {anno}...")
+            
             data_inizio = f"01/06/{anno - 1}"
             data_fine = f"30/05/{anno}"
             
@@ -66,9 +68,9 @@ def avvia_estrazione_calendari_nazionale():
                 "action": "competizioni_get_all",
                 "offset": 0,
                 "limit": 100,
-                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/?dis=F", 
+                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", # 🎯 URL PULITO E PERFETTO
                 "idStagione": str(anno), 
-                "disciplina": "", # ⚠️ FONDAMENTALE CHE SIA VUOTO PER NON FAR CRASHARE L'API!
+                "disciplina": "", # 🎯 NESSUN FILTRO QUI
                 "dataInizio": data_inizio,
                 "dataFine": data_fine
             }
@@ -92,29 +94,29 @@ def avvia_estrazione_calendari_nazionale():
                         all_gare_comitato.append(record)
                         
                     params["offset"] += params["limit"]
-                    time.sleep(0.2) 
+                    time.sleep(0.1) 
 
             except Exception as e:
-                pass # Ignoriamo gli errori di connessione e andiamo avanti
+                pass 
 
         if all_gare_comitato:
             supabase.table("Gare").upsert(all_gare_comitato).execute()
-            print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE TOTALI PER {nome_comitato}")
+            print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE (Da filtrare) PER {nome_comitato}")
         else:
             print(f"   ⏩ Nessuna gara trovata per {nome_comitato}.")
             
         time.sleep(0.5)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI E FILTRO ANTI-INTRUSI
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E FILTRO DISTRUGGI-INTRUSI
 # =====================================================================
 def spider_atleti_master_con_tempo():
-    print("\n--- 📂 RECUPERO LE GARE DAL DATABASE... ---")
+    print("\n--- 📂 RECUPERO LE GARE DAL DATABASE E AVVIO FILTRAGGIO... ---")
     
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare totali nel DB)")
+    print(f"--- ⏱️ INIZIO ANALISI SU {len(lista_gare)} GARE ---")
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
@@ -131,33 +133,35 @@ def spider_atleti_master_con_tempo():
         
         stagione_fisi = calcola_stagione_fisi(data_g)
         
-        # 1. Recuperiamo gli ID delle sottogare
+        # 1. Apriamo la pagina principale della competizione
         url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
         
         try:
             res = requests.get(url_comp, headers=HEADERS, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
+            testo_pagina_principale = soup.get_text().upper()
+
+            # 🛡️ IL CANCELLO ANTI-INTRUSI (SUPER VELOCE)
+            # Se leggiamo queste parole, non è Sci di Fondo. La distruggiamo subito!
+            if "ALPINO" in testo_pagina_principale or "SNOWBOARD" in testo_pagina_principale or "SLALOM" in testo_pagina_principale or "GIGANTE" in testo_pagina_principale or "BIATHLON" in testo_pagina_principale:
+                if "FONDO" not in testo_pagina_principale and "NORDICO" not in testo_pagina_principale:
+                    print(f"   🗑️ ELIMINATA: {nome_g} (Non era Fondo, rimossa dal DB!)")
+                    supabase.table("Gare").delete().eq("id_gara_fisi", id_comp).execute()
+                    continue # Salta all'istante alla prossima gara
+            
             links = soup.find_all('a', href=True)
             id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
             
             if not id_sottogare:
                 continue
 
-            # 2. Analizziamo le classifiche
+            print(f"\n🟢 Analizzo Fondo: {nome_g} a {luogo_g}")
+
+            # 2. Analizziamo le singole classifiche di Fondo
             for id_g in id_sottogare:
                 url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
                 r_data = requests.get(url_gara, headers=HEADERS, timeout=15)
                 gara_soup = BeautifulSoup(r_data.text, 'html.parser')
-                testo_pagina = gara_soup.get_text().upper()
-
-                # 🛡️ IL CANCELLO ANTI-INTRUSI: Scoviamo e distruggiamo le gare di Sci Alpino
-                if "ALPINO" in testo_pagina or "SNOWBOARD" in testo_pagina or "SLALOM" in testo_pagina or "GIGANTE" in testo_pagina:
-                    if "FONDO" not in testo_pagina and "NORDICO" not in testo_pagina:
-                        print(f"   🗑️ ELIMINATA: {nome_g} (Era Sci Alpino/Altro, rimossa dal DB!)")
-                        supabase.table("Gare").delete().eq("id_gara_fisi", id_comp).execute()
-                        break # Fermiamo l'analisi di questa gara
-                
-                print(f"🟢 Analizzo Fondo: {nome_g} a {luogo_g}")
                 
                 testi_completi = list(gara_soup.stripped_strings)
                 cat, spec = "", ""
@@ -199,7 +203,7 @@ def spider_atleti_master_con_tempo():
                     supabase.table("Risultati").upsert(batch_atleti).execute()
                     print(f"   ✅ Salvati {len(batch_atleti)} atleti!")
                 
-                time.sleep(0.5)
+                time.sleep(0.3)
 
         except Exception as e:
             print(f"   ❌ Errore sull'evento {id_comp}: {e}")
