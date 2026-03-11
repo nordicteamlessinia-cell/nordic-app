@@ -44,7 +44,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Aspirapolvere Intelligente)
+# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Il tuo metodo originale esteso)
 # =====================================================================
 def avvia_estrazione_calendari_nazionale():
     print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI STORICI ---")
@@ -58,38 +58,22 @@ def avvia_estrazione_calendari_nazionale():
         print(f"\n🌍 Estrazione calendario per: {nome_comitato}...")
         all_gare_comitato = []
         
-        # 🕵️‍♂️ FASE DI SCOPERTA: Troviamo l'URL "chiave" che piace a questo comitato
-        url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/" # default
-        for percorso in ["calendario", "calendario-gare", "gare", ""]:
-            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
-            try:
-                # Facciamo un test veloce sull'anno in corso
-                r = requests.get(BASE_URL_AJAX, params={"action": "competizioni_get_all", "offset": 0, "limit": 5, "url": test_url, "idStagione": str(anno_massimo), "disciplina": "", "dataInizio": f"01/06/{anno_massimo-1}", "dataFine": f"30/05/{anno_massimo}"}, headers=HEADERS, timeout=10)
-                if r.status_code == 200 and r.json():
-                    url_chiave = test_url
-                    break # Chiave trovata!
-            except:
-                pass
-        
-        # 🚀 ORA SCARICHIAMO TUTTO LO STORICO USANDO LA CHIAVE GIUSTA
         for anno in stagioni_da_scaricare:
-            data_inizio = f"01/06/{anno - 1}"
-            data_fine = f"30/05/{anno}"
-            
+            # 🎯 IL SEGRETO: Date larghissime, lasciamo filtrare a 'idStagione'
             params = {
                 "action": "competizioni_get_all",
                 "offset": 0,
                 "limit": 100,
-                "url": url_chiave, 
+                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", 
                 "idStagione": str(anno), 
-                "disciplina": "", # Senza filtri, prendiamo tutto per non far crashare!
-                "dataInizio": data_inizio,
-                "dataFine": data_fine
+                "disciplina": "", 
+                "dataInizio": "01/01/2010", 
+                "dataFine": "31/12/2030"
             }
             
             try:
                 while True:
-                    r = requests.get(BASE_URL_AJAX, params=params, headers=HEADERS, timeout=30)
+                    r = requests.get(BASE_URL_AJAX, params=params, headers=HEADERS, timeout=15)
                     if r.status_code != 200: break
                         
                     data = r.json()
@@ -103,12 +87,12 @@ def avvia_estrazione_calendari_nazionale():
                             "data_gara": item.get("dataInizio"), 
                             "comitato": nome_comitato 
                         }
+                        # Aggiungiamo solo se non c'è già (evita duplicati se l'API sbarella)
                         if record not in all_gare_comitato:
                             all_gare_comitato.append(record)
                         
                     params["offset"] += params["limit"]
-                    time.sleep(0.1) 
-
+                    
             except Exception:
                 pass 
 
@@ -116,7 +100,7 @@ def avvia_estrazione_calendari_nazionale():
             supabase.table("Gare").upsert(all_gare_comitato).execute()
             print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE (Da filtrare) PER {nome_comitato}")
         else:
-            print(f"   ⏩ Nessuna gara trovata per {nome_comitato} (Provato URL: {url_chiave}).")
+            print(f"   ⏩ Nessuna gara trovata per {nome_comitato}.")
             
         time.sleep(0.5)
 
@@ -216,7 +200,7 @@ def spider_atleti_master_con_tempo():
                 time.sleep(0.3)
 
         except Exception as e:
-            pass # Continua se c'è errore
+            pass 
 
 if __name__ == "__main__":
     avvia_estrazione_calendari_nazionale()
