@@ -56,19 +56,19 @@ def spider_calendari_fondo_nazionale():
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Cerco le gare per: {nome_comitato}...")
         
-        percorso_base = "calendario"
         gare_totali_comitato = 0
         
         for anno in stagioni_da_scaricare:
             pagina_corrente = 1
             id_gia_visti = set()
+            percorso_base = "calendario"
             
             while True:
-                # 🎯 IL TRUCCO: Uniamo idStagione, disciplina (dis=F) e paginazione!
+                # 🎯 IL TRUCCO CORRETTO: Uniamo anno (?d=), disciplina (&dis=F) e paginazione!
                 if pagina_corrente == 1:
-                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?idStagione={anno}&dis=F"
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F"
                 else:
-                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?idStagione={anno}&dis=F&paged={pagina_corrente}"
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F&paged={pagina_corrente}"
                 
                 try:
                     res = requests.get(url_calendario, headers=HEADERS, timeout=15)
@@ -76,11 +76,12 @@ def spider_calendari_fondo_nazionale():
                     # Fallback automatico se il sito usa "calendario-gare"
                     if res.status_code == 404 and pagina_corrente == 1 and percorso_base == "calendario":
                         percorso_base = "calendario-gare"
-                        url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?idStagione={anno}&dis=F"
+                        url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&dis=F"
                         res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                     
+                    # Se dà ANCORA 404, abbiamo finito le pagine di questo anno
                     if res.status_code == 404 or res.status_code != 200:
-                        break # Pagine finite per quest'anno
+                        break 
                         
                     soup = BeautifulSoup(res.text, 'html.parser')
                     righe = soup.find_all('tr')
@@ -121,10 +122,9 @@ def spider_calendari_fondo_nazionale():
                         except Exception:
                             continue
                     
-                    # Stop se la tabella non ha più righe utili
-                    if not nuove_gare_nella_pagina and len(batch_gare) == 0:
-                        if len(righe) < 2: 
-                            break
+                    # Se non c'è nessuna nuova gara in questa pagina, interrompi la paginazione per questo anno
+                    if not nuove_gare_nella_pagina:
+                        break
                         
                     if batch_gare:
                         supabase.table("Gare").upsert(batch_gare).execute()
