@@ -11,9 +11,8 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
-BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ DIZIONARIO NAZIONALE
+# 🗺️ DIZIONARIO NAZIONALE DEGLI SLUG WEB
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -44,10 +43,10 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: ESTRAZIONE CALENDARI (Il tuo metodo originale esteso)
+# 🗓️ FASE 1: SPIDER DEI CALENDARI HTML (Il nostro filtro Infallibile)
 # =====================================================================
-def avvia_estrazione_calendari_nazionale():
-    print("--- 🚀 INIZIO DOWNLOAD CALENDARI NAZIONALI STORICI ---")
+def spider_calendari_fondo_nazionale():
+    print("\n--- 📅 FASE 1: DOWNLOAD CALENDARI STORICI (SOLO FONDO) ---")
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
@@ -55,65 +54,104 @@ def avvia_estrazione_calendari_nazionale():
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Estrazione calendario per: {nome_comitato}...")
-        all_gare_comitato = []
+        print(f"\n🌍 Cerco le gare per: {nome_comitato}...")
+        
+        percorso_base = "calendario"
+        gare_totali_comitato = 0
         
         for anno in stagioni_da_scaricare:
-            # 🎯 IL SEGRETO: Date larghissime, lasciamo filtrare a 'idStagione'
-            params = {
-                "action": "competizioni_get_all",
-                "offset": 0,
-                "limit": 100,
-                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", 
-                "idStagione": str(anno), 
-                "disciplina": "", 
-                "dataInizio": "01/01/2010", 
-                "dataFine": "31/12/2030"
-            }
+            pagina_corrente = 1
+            id_gia_visti = set()
             
-            try:
-                while True:
-                    r = requests.get(BASE_URL_AJAX, params=params, headers=HEADERS, timeout=15)
-                    if r.status_code != 200: break
-                        
-                    data = r.json()
-                    if not data: break
-
-                    for item in data:
-                        record = {
-                            "id_gara_fisi": str(item.get("idCompetizione")), 
-                            "gara_nome": item.get("nome"),
-                            "luogo": item.get("comune"), 
-                            "data_gara": item.get("dataInizio"), 
-                            "comitato": nome_comitato 
-                        }
-                        # Aggiungiamo solo se non c'è già (evita duplicati se l'API sbarella)
-                        if record not in all_gare_comitato:
-                            all_gare_comitato.append(record)
-                        
-                    params["offset"] += params["limit"]
+            while True:
+                # Costruiamo l'URL passando sia l'anno (?d=ANNO) sia la pagina
+                if pagina_corrente == 1:
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}"
+                else:
+                    url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}&paged={pagina_corrente}"
+                
+                try:
+                    res = requests.get(url_calendario, headers=HEADERS, timeout=15)
                     
-            except Exception:
-                pass 
-
-        if all_gare_comitato:
-            supabase.table("Gare").upsert(all_gare_comitato).execute()
-            print(f"   ✅ SALVATE {len(all_gare_comitato)} GARE (Da filtrare) PER {nome_comitato}")
-        else:
-            print(f"   ⏩ Nessuna gara trovata per {nome_comitato}.")
-            
-        time.sleep(0.5)
+                    # Se dà 404, proviamo con calendario-gare (solo alla prima pagina per capire il sito)
+                    if res.status_code == 404 and pagina_corrente == 1 and percorso_base == "calendario":
+                        percorso_base = "calendario-gare"
+                        url_calendario = f"https://comitati.fisi.org/{slug_sito}/{percorso_base}/?d={anno}"
+                        res = requests.get(url_calendario, headers=HEADERS, timeout=15)
+                    
+                    # Se dà ANCORA 404, abbiamo finito le pagine di questo anno
+                    if res.status_code == 404:
+                        break
+                        
+                    if res.status_code != 200:
+                        break
+                        
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    righe = soup.find_all('tr')
+                    
+                    batch_gare = []
+                    nuove_gare_nella_pagina = False
+                    
+                    for riga in righe:
+                        colonne = riga.find_all('td')
+                        if len(colonne) < 3: continue
+                        
+                        link_tag = riga.find('a', href=True)
+                        if not link_tag or 'idComp=' not in link_tag['href']: continue
+                        
+                        # 🎯 IL NOSTRO FILTRO INFALLIBILE!
+                        testo_riga_intero = riga.get_text().upper()
+                        if "FONDO" not in testo_riga_intero and "NORDICO" not in testo_riga_intero and "CROSS COUNTRY" not in testo_riga_intero:
+                            continue 
+                        
+                        try:
+                            id_comp = link_tag['href'].split('idComp=')[1].split('&')[0]
+                            
+                            if id_comp in id_gia_visti: continue
+                            id_gia_visti.add(id_comp)
+                            nuove_gare_nella_pagina = True
+                            
+                            data_g = colonne[0].get_text(strip=True)
+                            luogo_g = colonne[1].get_text(strip=True) if len(colonne) > 1 else "N/D"
+                            nome_g = colonne[2].get_text(strip=True) if len(colonne) > 2 else "Gara FISI"
+                            
+                            batch_gare.append({
+                                "id_gara_fisi": id_comp,
+                                "data_gara": data_g,
+                                "luogo": luogo_g,
+                                "gara_nome": nome_g,
+                                "comitato": nome_comitato
+                            })
+                        except Exception:
+                            continue
+                    
+                    # Se non c'è nessuna nuova gara in questa pagina, interrompi la paginazione per questo anno
+                    if not nuove_gare_nella_pagina and len(batch_gare) == 0:
+                        if len(righe) < 2: 
+                            break
+                        
+                    if batch_gare:
+                        supabase.table("Gare").upsert(batch_gare).execute()
+                        gare_totali_comitato += len(batch_gare)
+                        print(f"   📄 Anno {anno} - Pagina {pagina_corrente}: Salvate {len(batch_gare)} gare di FONDO.")
+                        
+                    time.sleep(0.5) 
+                    pagina_corrente += 1
+                    
+                except Exception as e:
+                    break
+                    
+        print(f"   🏁 Completato {nome_comitato}: {gare_totali_comitato} gare di FONDO trovate dal 2020 ad oggi.")
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E FILTRO DISTRUGGI-INTRUSI
+# ⛷️ FASE 2: SPIDER DEGLI ATLETI
 # =====================================================================
 def spider_atleti_master_con_tempo():
-    print("\n--- 📂 RECUPERO LE GARE DAL DATABASE E AVVIO FILTRAGGIO... ---")
-    
+    print("\n--- 📂 FASE 2: RECUPERO RISULTATI ATLETI DAL DATABASE... ---")
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⏱️ INIZIO ANALISI SU {len(lista_gare)} GARE ---")
+    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare nel DB)")
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
@@ -126,7 +164,8 @@ def spider_atleti_master_con_tempo():
             continue
             
         slug_sito = COMITATI_FISI.get(nome_comitato)
-        if not slug_sito: continue
+        if not slug_sito: 
+            continue
         
         stagione_fisi = calcola_stagione_fisi(data_g)
         
@@ -135,22 +174,13 @@ def spider_atleti_master_con_tempo():
         try:
             res = requests.get(url_comp, headers=HEADERS, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
-            testo_pagina_principale = soup.get_text().upper()
-
-            # 🛡️ IL CANCELLO ANTI-INTRUSI (SUPER VELOCE)
-            if "ALPINO" in testo_pagina_principale or "SNOWBOARD" in testo_pagina_principale or "SLALOM" in testo_pagina_principale or "GIGANTE" in testo_pagina_principale or "BIATHLON" in testo_pagina_principale:
-                if "FONDO" not in testo_pagina_principale and "NORDICO" not in testo_pagina_principale:
-                    print(f"   🗑️ ELIMINATA: {nome_g} (Non era Fondo, rimossa dal DB!)")
-                    supabase.table("Gare").delete().eq("id_gara_fisi", id_comp).execute()
-                    continue 
-            
             links = soup.find_all('a', href=True)
             id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
             
             if not id_sottogare:
                 continue
 
-            print(f"\n🟢 Analizzo Fondo: {nome_g} a {luogo_g}")
+            print(f"\n🟢 Analizzo: {nome_g} a {luogo_g} ({nome_comitato} | Data: {data_g})")
 
             for id_g in id_sottogare:
                 url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
@@ -195,13 +225,13 @@ def spider_atleti_master_con_tempo():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti!")
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti per la gara!")
                 
                 time.sleep(0.3)
 
         except Exception as e:
-            pass 
+            pass
 
 if __name__ == "__main__":
-    avvia_estrazione_calendari_nazionale()
+    spider_calendari_fondo_nazionale()
     spider_atleti_master_con_tempo()
