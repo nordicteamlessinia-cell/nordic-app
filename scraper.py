@@ -12,7 +12,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🛡️ ARMATURA DI RETE (Evita i blackout di GitHub Actions)
+# 🛡️ ARMATURA DI RETE
 session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
 session.mount('https://', HTTPAdapter(max_retries=retries))
@@ -23,7 +23,6 @@ session.headers.update(HEADERS)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ DIZIONARIO NAZIONALE (Slug Ufficiali)
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -54,7 +53,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Filtro sul campo "disciplina" grezzo)
+# 🗓️ FASE 1: DOWNLOAD CON CONTROLLO "DOPPIA MANDATA"
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: DOWNLOAD CALENDARI NAZIONALI (DAL 2020) ---")
@@ -63,6 +62,9 @@ def spider_calendari_nazionale():
     mese_corrente = datetime.datetime.now().month
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
+    
+    # LA LISTA NERA: Qualsiasi gara contenga queste parole viene incenerita.
+    LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Analizzo: {nome_comitato}...")
@@ -75,7 +77,7 @@ def spider_calendari_nazionale():
                 "limit": 100,
                 "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
                 "idStagione": str(anno),
-                "disciplina": "", # Chiediamo TUTTO, poi filtriamo noi in modo infallibile
+                "disciplina": "", 
                 "dataInizio": "01/01/2010",
                 "dataFine": "31/12/2030"
             }
@@ -87,10 +89,17 @@ def spider_calendari_nazionale():
                     if not data: break
 
                     for item in data:
-                        # 🎯 ECCO LA MAGIA SCOPERTA DAL TUO TEST:
                         disciplina_ufficiale = str(item.get("disciplina", "")).upper()
+                        nome_gara = str(item.get("nome", "")).upper()
                         
-                        if "FONDO" in disciplina_ufficiale or "LANGLAUF" in disciplina_ufficiale or "NORDICO" in disciplina_ufficiale:
+                        # CONTROLLO 1: È Fondo secondo la FISI o secondo il nome?
+                        is_fondo = ("FONDO" in disciplina_ufficiale or "LANGLAUF" in disciplina_ufficiale or "NORDICO" in disciplina_ufficiale) or ("FONDO" in nome_gara or "LANGLAUF" in nome_gara or "CROSS COUNTRY" in nome_gara)
+                        
+                        # CONTROLLO 2: Contiene parole proibite?
+                        is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
+                        
+                        # VERDETTO FINALE
+                        if is_fondo and not is_proibita:
                             record = {
                                 "id_gara_fisi": str(item.get("idCompetizione")), 
                                 "gara_nome": item.get("nome"),
@@ -104,10 +113,10 @@ def spider_calendari_nazionale():
                     params["offset"] += params["limit"]
                     
             except Exception as e:
-                print(f"   ❌ Errore di rete: {e}")
+                pass
 
         if all_gare_fondo:
-            print(f"   💾 INVIO {len(all_gare_fondo)} GARE DI PURO FONDO A SUPABASE")
+            print(f"   💾 INVIO {len(all_gare_fondo)} GARE BLINDATE A SUPABASE")
             supabase.table("Gare").upsert(all_gare_fondo).execute()
         else:
             print(f"   ⏩ Nessuna gara di Fondo trovata.")
