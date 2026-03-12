@@ -13,7 +13,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ IL DIZIONARIO ESATTO
+# 🗺️ IL DIZIONARIO ESATTO E DEFINITIVO
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo/calendario',
     'Alto Adige (AA)': 'altoadige/calendario-gare',
@@ -44,10 +44,10 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD AJAX + FILTRO "CECCHINO" (Evita il Fondo Europeo!)
+# 🗓️ FASE 1: RICERCA INTELLIGENTE CON SCOPERTA ID REGIONALE
 # =====================================================================
 def spider_calendari_fondo_nazionale():
-    print("\n--- 📅 FASE 1: DOWNLOAD CALENDARI E PULIZIA ---")
+    print("\n--- 📅 FASE 1: DOWNLOAD CALENDARI STORICI (SOLO FONDO) ---")
     
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -60,8 +60,31 @@ def spider_calendari_fondo_nazionale():
     for nome_comitato, percorso_base in COMITATI_FISI.items():
         print(f"\n🌍 Analizzo: {nome_comitato}...")
         
-        slug_sito = percorso_base.split('/')[0]
         url_calendario = f"https://comitati.fisi.org/{percorso_base}/"
+        
+        # 🕵️‍♂️ SCOPRIAMO L'ID LOCALE DEL FONDO LEGGENDO LA PAGINA INVISIBILE
+        id_disciplina_fondo = ""
+        try:
+            res_cal = session.get(url_calendario, timeout=15)
+            soup_cal = BeautifulSoup(res_cal.text, 'html.parser')
+            for select in soup_cal.find_all('select'):
+                for opt in select.find_all('option'):
+                    testo = opt.text.upper()
+                    # Aggiunto anche il tedesco "LANGLAUF" per l'Alto Adige!
+                    if "FONDO" in testo or "NORDICO" in testo or "LANGLAUF" in testo:
+                        val = opt.get('value')
+                        if val and val.strip() not in ["", "-1", "TUTTE", "0"]:
+                            id_disciplina_fondo = val.strip()
+                            break
+                if id_disciplina_fondo: break
+        except Exception:
+            pass
+            
+        if id_disciplina_fondo:
+            print(f"   🔑 Trovato ID Segreto Fondo per questa regione: '{id_disciplina_fondo}'")
+        else:
+            print(f"   ⚠️ ID non trovato, richiederò tutto e scarterò i nomi palesi di Alpino.")
+
         all_gare_fondo = []
         
         for anno in stagioni_da_scaricare:
@@ -71,7 +94,7 @@ def spider_calendari_fondo_nazionale():
                 "limit": 100,
                 "url": url_calendario, 
                 "idStagione": str(anno), 
-                "disciplina": "", # Scarichiamo tutto velocemente, filtriamo noi!
+                "disciplina": id_disciplina_fondo, # Se vuoto, scarica tutto
                 "dataInizio": "01/01/2010",
                 "dataFine": "31/12/2030"
             }
@@ -85,58 +108,31 @@ def spider_calendari_fondo_nazionale():
                     data = r.json()
                     if not data: break
 
-                    nuove_gare = 0
+                    nuove_gare_trovate = 0
 
                     for item in data:
                         id_comp = str(item.get("idCompetizione"))
+                        
+                        # ANTI-LOOP: Se ci dà le stesse gare, saltiamo
                         if id_comp in gare_viste_questo_anno:
                             continue
                             
                         gare_viste_questo_anno.add(id_comp)
-                        nuove_gare += 1
+                        nuove_gare_trovate += 1
                         
                         nome_g = str(item.get("nome", ""))
                         luogo_g = str(item.get("comune", ""))
                         data_g = str(item.get("dataInizio", ""))
                         
-                        is_fondo = False
-                        nome_upper = nome_g.upper()
+                        is_valido = True
                         
-                        # 1. Scarto rapido dai nomi palesi
-                        if any(x in nome_upper for x in ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SKICROSS", "SNOWBOARD"]):
-                            continue 
-                            
-                        # 2. Promozione rapida dai nomi palesi
-                        if "SCI DI FONDO" in nome_upper or "LANGLAUF" in nome_upper or "CROSS COUNTRY" in nome_upper:
-                            is_fondo = True
-                            
-                        # 3. CONTROLLO CECCHINO (Evita la trappola del "Fondo Sociale Europeo")
-                        if not is_fondo:
-                            url_test = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}"
-                            try:
-                                res_test = session.get(url_test, timeout=10)
-                                soup_test = BeautifulSoup(res_test.text, 'html.parser')
+                        # Se NON avevamo trovato l'ID e ha scaricato tutto, tagliamo fuori l'Alpino dal nome velocemente
+                        if not id_disciplina_fondo:
+                            nome_up = nome_g.upper()
+                            if any(x in nome_up for x in ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD"]):
+                                is_valido = False
                                 
-                                # Estraiamo tutte le stringhe di testo pulite
-                                testi = list(soup_test.stripped_strings)
-                                disciplina_trovata = ""
-                                
-                                # Cerchiamo ESATTAMENTE il campo "Disciplina" o "Specialità"
-                                for i, t in enumerate(testi):
-                                    testo_nodo = t.upper()
-                                    if "DISCIPLINA" in testo_nodo or "SPECIALITÀ" in testo_nodo or "SPECIALITA" in testo_nodo:
-                                        if i + 1 < len(testi):
-                                            disciplina_trovata += " " + testi[i+1].upper()
-                                            
-                                # Se in quel campo c'è il Fondo, allora è VERO Fondo!
-                                selettori_validi = ["FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDICO"]
-                                if any(x in disciplina_trovata for x in selettori_validi):
-                                    is_fondo = True
-                                    
-                            except Exception:
-                                pass
-
-                        if is_fondo:
+                        if is_valido:
                             record = {
                                 "id_gara_fisi": id_comp, 
                                 "gara_nome": nome_g,
@@ -144,11 +140,10 @@ def spider_calendari_fondo_nazionale():
                                 "data_gara": data_g, 
                                 "comitato": nome_comitato 
                             }
-                            if record not in all_gare_fondo:
-                                all_gare_fondo.append(record)
-                                print(f"   🎿 Trovato Fondo: {nome_g}")
+                            all_gare_fondo.append(record)
                     
-                    if nuove_gare == 0:
+                    # ANTI-LOOP: Usciamo se non ci sono nuove gare in questa pagina
+                    if nuove_gare_trovate == 0:
                         break
                         
                     params["offset"] += params["limit"]
@@ -159,17 +154,19 @@ def spider_calendari_fondo_nazionale():
         if all_gare_fondo:
             try:
                 supabase.table("Gare").upsert(all_gare_fondo).execute()
-                print(f"   ✅ SALVATE {len(all_gare_fondo)} GARE DI PURO FONDO.")
+                print(f"   ✅ SALVATE {len(all_gare_fondo)} GARE IN DATABASE.")
             except Exception as e:
                 print(f"   ❌ Errore Database: {e}")
         else:
-            print(f"   ⏩ Nessuna gara di Fondo trovata.")
+            print(f"   ⏩ Nessuna gara trovata.")
+        
+        time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E PULIZIA DI SICUREZZA
 # =====================================================================
 def spider_atleti_master_con_tempo():
-    print("\n--- 📂 FASE 2: RECUPERO RISULTATI ATLETI... ---")
+    print("\n--- 📂 FASE 2: RECUPERO RISULTATI E PULIZIA DI SICUREZZA ---")
     session = requests.Session()
     session.headers.update(HEADERS)
     
@@ -177,10 +174,10 @@ def spider_atleti_master_con_tempo():
         gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
         lista_gare = gare_db.data
     except Exception as e:
-        print(f"❌ Errore fatale DB: {e}")
+        print(f"❌ Errore fatale nella lettura dal Database: {e}")
         return
 
-    print(f"--- ⏱️ INIZIO ESTRAZIONE ({len(lista_gare)} gare) ---")
+    print(f"--- ⏱️ INIZIO ESTRAZIONE ATLETI --- (Trovate {len(lista_gare)} gare nel DB)")
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
@@ -202,13 +199,29 @@ def spider_atleti_master_con_tempo():
         try:
             res = session.get(url_comp, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
+            testo_pagina = soup.get_text().upper()
+            
+            # 🛡️ IL CECCHINO: Se la gara è "Trofeo Topolino" ma dentro c'è scritto Alpino/Snowboard, la elimina!
+            is_vero_fondo = False
+            if "FONDO" in testo_pagina or "NORDICO" in testo_pagina or "LANGLAUF" in testo_pagina or "CROSS COUNTRY" in testo_pagina:
+                is_vero_fondo = True
+                
+            if "ALPINO" in testo_pagina or "SNOWBOARD" in testo_pagina or "SLALOM" in testo_pagina:
+                if "FONDO" not in testo_pagina: # Sicurezza doppia
+                    is_vero_fondo = False
+                    
+            if not is_vero_fondo:
+                print(f"   🗑️ ELIMINATA DAL DB: {nome_g} (Era una gara di Alpino/Altre discipline)")
+                supabase.table("Gare").delete().eq("id_gara_fisi", id_comp).execute()
+                continue # Salta alla prossima gara senza cercare atleti
+            
             links = soup.find_all('a', href=True)
             id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
             
             if not id_sottogare:
                 continue
 
-            print(f"\n🟢 Analizzo classifica: {nome_g} a {luogo_g}")
+            print(f"\n🟢 Analizzo: {nome_g} a {luogo_g}")
 
             for id_g in id_sottogare:
                 url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
@@ -253,7 +266,7 @@ def spider_atleti_master_con_tempo():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti.")
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti per la gara!")
 
         except Exception:
             pass
