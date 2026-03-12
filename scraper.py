@@ -23,6 +23,13 @@ session.headers.update(HEADERS)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
+# 🗺️ ELENCO ACRONIMI FISI PER GLI ATLETI
+ACRONIMI_FISI = [
+    "AA", "AC", "AOC", "CAB", "CAE", "CAL", "CAM", "CAT", "CLS", "CUM",
+    "FVG", "LIG", "PUG", "SIC", "TN", "VA", "ASIVA", "VE",
+    "GM1", "GM2", "GM3", "GM4", "GM5", "FFOO", "FFGG", "CSCA", "CS", "CC", "AM"
+]
+
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -53,7 +60,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Mantiene il database aggiornato)
+# 🗓️ FASE 1: DOWNLOAD CALENDARI (Con Memoria Globale Anti-Cloni)
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
@@ -64,6 +71,9 @@ def spider_calendari_nazionale():
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
+    
+    # 🧠 MEMORIA GLOBALE: Si ricorda tutte le gare estratte finora per evitare i cloni!
+    gare_viste_globali = set()
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
@@ -88,6 +98,12 @@ def spider_calendari_nazionale():
                     if not data: break
 
                     for item in data:
+                        id_comp = str(item.get("idCompetizione"))
+                        
+                        # 🛡️ SCUDO ANTI-CLONI: Se l'abbiamo già salvata in un'altra regione, ignorala!
+                        if id_comp in gare_viste_globali:
+                            continue
+                            
                         disciplina_ufficiale = str(item.get("disciplina", "")).upper()
                         nome_gara = str(item.get("nome", "")).upper()
                         
@@ -95,15 +111,24 @@ def spider_calendari_nazionale():
                         is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
                         
                         if is_fondo and not is_proibita:
+                            # Segnamo l'ID come visto per sempre
+                            gare_viste_globali.add(id_comp)
+                            
+                            # 🎯 ASSEGNAZIONE INTELLIGENTE DEL COMITATO (Legge il Livello Gara)
+                            livello_gara = str(item.get("livello", "")).upper()
+                            if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
+                                comitato_assegnato = "Nazionale/Internazionale"
+                            else:
+                                comitato_assegnato = nome_comitato
+
                             record = {
-                                "id_gara_fisi": str(item.get("idCompetizione")), 
+                                "id_gara_fisi": id_comp, 
                                 "gara_nome": item.get("nome"),
                                 "luogo": item.get("comune", "N/D"), 
                                 "data_gara": item.get("dataInizio", "N/D"), 
-                                "comitato": nome_comitato 
+                                "comitato": comitato_assegnato 
                             }
-                            if record not in all_gare_fondo:
-                                all_gare_fondo.append(record)
+                            all_gare_fondo.append(record)
                         
                     params["offset"] += params["limit"]
                     
@@ -111,16 +136,15 @@ def spider_calendari_nazionale():
                 pass
 
         if all_gare_fondo:
-            # Upsert ignora i duplicati automaticamente
             supabase.table("Gare").upsert(all_gare_fondo).execute()
             print(f"   ✅ Salvate/Aggiornate {len(all_gare_fondo)} gare.", flush=True)
         else:
-            print(f"   ⏩ Nessuna gara di Fondo trovata.", flush=True)
+            print(f"   ⏩ Nessuna gara NUOVA trovata in questa regione.", flush=True)
         
         time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI (CON SALVATAGGIO DI STATO!)
+# ⛷️ FASE 2: ESTRAZIONE ATLETI 
 # =====================================================================
 def spider_atleti_master():
     print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
@@ -128,25 +152,26 @@ def spider_atleti_master():
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⏱️ INIZIO ESTRAZIONE SU {len(lista_gare)} GARE FONDO ---", flush=True)
+    print(f"--- ⏱️ INIZIO ESTRAZIONE SU {len(lista_gare)} GARE FONDO UNICHE ---", flush=True)
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
         data_g = gara.get('data_gara')
         nome_g = gara.get('gara_nome')
         luogo_g = gara.get('luogo')
-        nome_comitato = gara.get('comitato')
+        nome_comitato_gara = gara.get('comitato') 
         
-        if not id_comp or not nome_comitato: continue
+        if not id_comp or not nome_comitato_gara: continue
         
-        # 🧠 CONTROLLO INTELLIGENTE: La gara è già in Supabase?
+        # CONTROLLO: La gara è già in Supabase?
         controllo_db = supabase.table("Risultati").select("id_comp_collegata").eq("id_comp_collegata", id_comp).limit(1).execute()
         if len(controllo_db.data) > 0:
             print(f"   ⏩ Già scaricata, salto: {nome_g}", flush=True)
-            continue # Passa subito alla prossima gara senza fare nulla!
+            continue
 
-        slug_sito = COMITATI_FISI.get(nome_comitato)
-        if not slug_sito: continue
+        # Poiché le gare Nazionali non hanno lo slug del sito, usiamo la "sede centrale" (FISI Nazionale o Trentino per default API)
+        # Se la gara è "Nazionale/Internazionale", usiamo la home FISI o lo slug Veneto/Trentino per interrogare l'API classifiche.
+        slug_sito = COMITATI_FISI.get(nome_comitato_gara, "trentino") 
         
         stagione_fisi = calcola_stagione_fisi(data_g)
         print(f"\n🟢 Scarico: {nome_g} ({luogo_g} - {data_g})", flush=True)
@@ -187,6 +212,14 @@ def spider_atleti_master():
                 i = 0
                 while i < len(testi_atleti) - 7:
                     if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
+                        
+                        blocco_atleta = testi_atleti[i:i+8]
+                        comitato_vero_atleta = "N/D"
+                        for testo in blocco_atleta:
+                            if testo.upper() in ACRONIMI_FISI:
+                                comitato_vero_atleta = testo.upper()
+                                break
+                        
                         batch_atleti.append({
                             "id_gara_fisi": id_g, 
                             "id_comp_collegata": id_comp, 
@@ -198,7 +231,7 @@ def spider_atleti_master():
                             "gara_nome": nome_g,
                             "luogo": luogo_g,
                             "data_gara": data_g,
-                            "comitato": nome_comitato
+                            "comitato": comitato_vero_atleta 
                         })
                         i += 8
                     else:
@@ -206,7 +239,7 @@ def spider_atleti_master():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti/tempi!", flush=True)
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti con il loro VERO comitato!", flush=True)
                 
                 time.sleep(0.3)
 
