@@ -23,13 +23,6 @@ session.headers.update(HEADERS)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🗺️ ELENCO ACRONIMI FISI PER GLI ATLETI
-ACRONIMI_FISI = [
-    "AA", "AC", "AOC", "CAB", "CAE", "CAL", "CAM", "CAT", "CLS", "CUM",
-    "FVG", "LIG", "PUG", "SIC", "TN", "VA", "ASIVA", "VE",
-    "GM1", "GM2", "GM3", "GM4", "GM5", "FFOO", "FFGG", "CSCA", "CS", "CC", "AM"
-]
-
 COMITATI_FISI = {
     'Abruzzo (CAB)': 'abruzzo',
     'Alto Adige (AA)': 'alto-adige',           
@@ -144,7 +137,7 @@ def spider_calendari_nazionale():
         time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI 
+# ⛷️ FASE 2: ESTRAZIONE ATLETI (Semplice e Veloce)
 # =====================================================================
 def spider_atleti_master():
     print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
@@ -169,8 +162,7 @@ def spider_atleti_master():
             print(f"   ⏩ Già scaricata, salto: {nome_g}", flush=True)
             continue
 
-        # Poiché le gare Nazionali non hanno lo slug del sito, usiamo la "sede centrale" (FISI Nazionale o Trentino per default API)
-        # Se la gara è "Nazionale/Internazionale", usiamo la home FISI o lo slug Veneto/Trentino per interrogare l'API classifiche.
+        # Gestione del routing per le gare Nazionali
         slug_sito = COMITATI_FISI.get(nome_comitato_gara, "trentino") 
         
         stagione_fisi = calcola_stagione_fisi(data_g)
@@ -213,13 +205,6 @@ def spider_atleti_master():
                 while i < len(testi_atleti) - 7:
                     if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
                         
-                        blocco_atleta = testi_atleti[i:i+8]
-                        comitato_vero_atleta = "N/D"
-                        for testo in blocco_atleta:
-                            if testo.upper() in ACRONIMI_FISI:
-                                comitato_vero_atleta = testo.upper()
-                                break
-                        
                         batch_atleti.append({
                             "id_gara_fisi": id_g, 
                             "id_comp_collegata": id_comp, 
@@ -231,7 +216,7 @@ def spider_atleti_master():
                             "gara_nome": nome_g,
                             "luogo": luogo_g,
                             "data_gara": data_g,
-                            "comitato": comitato_vero_atleta 
+                            "comitato": nome_comitato_gara # L'atleta prende semplicemente il comitato della gara
                         })
                         i += 8
                     else:
@@ -239,7 +224,7 @@ def spider_atleti_master():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti con il loro VERO comitato!", flush=True)
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti/tempi!", flush=True)
                 
                 time.sleep(0.3)
 
