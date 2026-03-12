@@ -53,21 +53,20 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CON CONTROLLO "DOPPIA MANDATA"
+# 🗓️ FASE 1: DOWNLOAD CALENDARI (Mantiene il database aggiornato)
 # =====================================================================
 def spider_calendari_nazionale():
-    print("--- 🚀 FASE 1: DOWNLOAD CALENDARI NAZIONALI (DAL 2020) ---")
+    print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
-    # LA LISTA NERA: Qualsiasi gara contenga queste parole viene incenerita.
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Analizzo: {nome_comitato}...")
+        print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
         all_gare_fondo = []
         
         for anno in stagioni_da_scaricare:
@@ -92,13 +91,9 @@ def spider_calendari_nazionale():
                         disciplina_ufficiale = str(item.get("disciplina", "")).upper()
                         nome_gara = str(item.get("nome", "")).upper()
                         
-                        # CONTROLLO 1: È Fondo secondo la FISI o secondo il nome?
                         is_fondo = ("FONDO" in disciplina_ufficiale or "LANGLAUF" in disciplina_ufficiale or "NORDICO" in disciplina_ufficiale) or ("FONDO" in nome_gara or "LANGLAUF" in nome_gara or "CROSS COUNTRY" in nome_gara)
-                        
-                        # CONTROLLO 2: Contiene parole proibite?
                         is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
                         
-                        # VERDETTO FINALE
                         if is_fondo and not is_proibita:
                             record = {
                                 "id_gara_fisi": str(item.get("idCompetizione")), 
@@ -112,27 +107,28 @@ def spider_calendari_nazionale():
                         
                     params["offset"] += params["limit"]
                     
-            except Exception as e:
+            except Exception:
                 pass
 
         if all_gare_fondo:
-            print(f"   💾 INVIO {len(all_gare_fondo)} GARE BLINDATE A SUPABASE")
+            # Upsert ignora i duplicati automaticamente
             supabase.table("Gare").upsert(all_gare_fondo).execute()
+            print(f"   ✅ Salvate/Aggiornate {len(all_gare_fondo)} gare.", flush=True)
         else:
-            print(f"   ⏩ Nessuna gara di Fondo trovata.")
+            print(f"   ⏩ Nessuna gara di Fondo trovata.", flush=True)
         
-        time.sleep(0.5)
+        time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI
+# ⛷️ FASE 2: ESTRAZIONE ATLETI (CON SALVATAGGIO DI STATO!)
 # =====================================================================
 def spider_atleti_master():
-    print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---")
+    print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
     
     gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
     lista_gare = gare_db.data
 
-    print(f"--- ⏱️ INIZIO ESTRAZIONE SU {len(lista_gare)} GARE FONDO ---")
+    print(f"--- ⏱️ INIZIO ESTRAZIONE SU {len(lista_gare)} GARE FONDO ---", flush=True)
 
     for gara in lista_gare:
         id_comp = gara.get('id_gara_fisi')
@@ -143,11 +139,17 @@ def spider_atleti_master():
         
         if not id_comp or not nome_comitato: continue
         
+        # 🧠 CONTROLLO INTELLIGENTE: La gara è già in Supabase?
+        controllo_db = supabase.table("Risultati").select("id_comp_collegata").eq("id_comp_collegata", id_comp).limit(1).execute()
+        if len(controllo_db.data) > 0:
+            print(f"   ⏩ Già scaricata, salto: {nome_g}", flush=True)
+            continue # Passa subito alla prossima gara senza fare nulla!
+
         slug_sito = COMITATI_FISI.get(nome_comitato)
         if not slug_sito: continue
         
         stagione_fisi = calcola_stagione_fisi(data_g)
-        print(f"\n🟢 Scarico: {nome_g} ({luogo_g} - {data_g})")
+        print(f"\n🟢 Scarico: {nome_g} ({luogo_g} - {data_g})", flush=True)
         
         url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
         
@@ -158,7 +160,7 @@ def spider_atleti_master():
             id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
             
             if not id_sottogare:
-                print("   ⏩ Classifica non ancora pubblicata.")
+                print("   ⏩ Classifica non ancora pubblicata.", flush=True)
                 continue
 
             for id_g in id_sottogare:
@@ -204,13 +206,14 @@ def spider_atleti_master():
                 
                 if batch_atleti:
                     supabase.table("Risultati").upsert(batch_atleti).execute()
-                    print(f"   ✅ Salvati {len(batch_atleti)} atleti/tempi!")
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti/tempi!", flush=True)
                 
                 time.sleep(0.3)
 
         except Exception as e:
-            print(f"   ❌ Errore sull'evento {id_comp}: {e}")
+            print(f"   ❌ Errore sull'evento {id_comp}: {e}", flush=True)
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
     spider_atleti_master()
+    print("\n🏁 SCRITTURA COMPLETATA AL 100%! 🏁", flush=True)
