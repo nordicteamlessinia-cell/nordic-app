@@ -43,7 +43,7 @@ COMITATI_FISI = {
     'Siculo (SIC)': 'siculo',
 }
 
-# 🎯 IL DECODER DELLE SIGLE (Previene i "furti" di gare tra regioni)
+# 🎯 DECODER DELLE SIGLE
 MAPPA_SIGLE = {
     'CAB': 'Abruzzo (CAB)',
     'AA': 'Alto Adige (AA)',
@@ -75,7 +75,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Corazzata contro bug server)
+# 🗓️ FASE 1: DOWNLOAD CALENDARI (Con Paginazione Ripristinata)
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
@@ -93,7 +93,6 @@ def spider_calendari_nazionale():
         print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
         all_gare_fondo = []
         
-        # Testiamo la porta principale del calendario
         url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/"
         for percorso in ["calendario", "calendario-gare", "gare", "competizioni", "calendario-eventi", ""]:
             test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
@@ -108,66 +107,75 @@ def spider_calendari_nazionale():
                 pass
 
         for anno in stagioni_da_scaricare:
-            # Abbiamo tolto le date restrittive e alzato il limite a 2000 per evitare blocchi
-            params = {
-                "action": "competizioni_get_all",
-                "offset": 0,
-                "limit": 2000, 
-                "url": url_chiave, 
-                "idStagione": str(anno)
-            }
+            offset = 0
+            limit = 100 # Chiediamo 100 gare alla volta educatamente
             
-            try:
-                r = session.get(BASE_URL_AJAX, params=params, timeout=30)
-                data = r.json()
-                if not data: continue
+            while True:
+                params = {
+                    "action": "competizioni_get_all",
+                    "offset": offset,
+                    "limit": limit, 
+                    "url": url_chiave, 
+                    "idStagione": str(anno)
+                }
+                
+                try:
+                    r = session.get(BASE_URL_AJAX, params=params, timeout=30)
+                    if r.status_code != 200: break
+                    
+                    data = r.json()
+                    if not data or not isinstance(data, list) or len(data) == 0: 
+                        break # Se la pagina è vuota, abbiamo finito l'anno
 
-                for item in data:
-                    id_comp = str(item.get("idCompetizione"))
-                    
-                    if id_comp in gare_viste_globali:
-                        continue
+                    for item in data:
+                        id_comp = str(item.get("idCompetizione"))
                         
-                    disciplina_ufficiale = str(item.get("disciplina", "")).upper()
-                    nome_gara = str(item.get("nome", "")).upper()
-                    
-                    # Ampliate le keywords per le gare
-                    is_fondo = any(k in disciplina_ufficiale for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "CROSS-COUNTRY", "XC"]) or \
-                               any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "CROSS-COUNTRY", "XC"])
-                    
-                    is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
-                    
-                    if is_fondo and not is_proibita:
-                        gare_viste_globali.add(id_comp)
-                        
-                        # 🕵️‍♂️ IL CUORE DELLA MODIFICA: Leggiamo la targa ufficiale della gara!
-                        sigla_api = str(item.get("comitato", "")).strip().upper()
-                        if not sigla_api:
-                            sigla_api = str(item.get("codiceComitato", "")).strip().upper()
+                        if id_comp in gare_viste_globali:
+                            continue
                             
-                        livello_gara = str(item.get("livello", "")).upper()
+                        disciplina_ufficiale = str(item.get("disciplina", "")).upper()
+                        nome_gara = str(item.get("nome", "")).upper()
                         
-                        if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
-                            comitato_assegnato = "Nazionale/Internazionale"
-                        elif sigla_api in MAPPA_SIGLE:
-                            comitato_assegnato = MAPPA_SIGLE[sigla_api] # Vittoria! Trovata l'origine esatta
-                        else:
-                            comitato_assegnato = nome_comitato # Fallback se l'API non ha la sigla
+                        is_fondo = any(k in disciplina_ufficiale for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "CROSS-COUNTRY", "XC"]) or \
+                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "CROSS-COUNTRY", "XC"])
+                        
+                        is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
+                        
+                        if is_fondo and not is_proibita:
+                            gare_viste_globali.add(id_comp)
+                            
+                            sigla_api = str(item.get("comitato", "")).strip().upper()
+                            if not sigla_api:
+                                sigla_api = str(item.get("codiceComitato", "")).strip().upper()
+                                
+                            livello_gara = str(item.get("livello", "")).upper()
+                            
+                            if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
+                                comitato_assegnato = "Nazionale/Internazionale"
+                            elif sigla_api in MAPPA_SIGLE:
+                                comitato_assegnato = MAPPA_SIGLE[sigla_api] 
+                            else:
+                                comitato_assegnato = nome_comitato 
 
-                        record = {
-                            "id_gara_fisi": id_comp, 
-                            "gara_nome": item.get("nome"),
-                            "luogo": item.get("comune", "N/D"), 
-                            "data_gara": item.get("dataInizio", "N/D"), 
-                            "comitato": comitato_assegnato 
-                        }
-                        all_gare_fondo.append(record)
+                            record = {
+                                "id_gara_fisi": id_comp, 
+                                "gara_nome": item.get("nome"),
+                                "luogo": item.get("comune", "N/D"), 
+                                "data_gara": item.get("dataInizio", "N/D"), 
+                                "comitato": comitato_assegnato 
+                            }
+                            all_gare_fondo.append(record)
                     
-            except Exception:
-                pass
+                    # Se ci ha restituito meno di 100 gare, vuol dire che non c'è una "pagina successiva"
+                    if len(data) < limit:
+                        break
+                        
+                    offset += limit # Passiamo alla pagina successiva (es. da 100 a 200)
+                    
+                except Exception:
+                    break
 
         if all_gare_fondo:
-            # Usando upsert garantiamo zero cloni nel DB
             supabase.table("Gare").upsert(all_gare_fondo).execute()
             print(f"   ✅ Salvate/Aggiornate {len(all_gare_fondo)} gare.", flush=True)
         else:
@@ -268,5 +276,5 @@ def spider_atleti_master():
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
-    # spider_atleti_master()  # <-- DISATTIVATO PER IL TEST VELOCE
-    print("\n🏁 FASE 1 COMPLETATA! Controlla il DB 🏁", flush=True)
+    # spider_atleti_master()  # <-- Fase 2 bloccata per il test
+    print("\n🏁 FASE 1 COMPLETATA! Controlla i nuovi numeri sul DB! 🏁", flush=True)
