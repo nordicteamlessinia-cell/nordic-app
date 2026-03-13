@@ -53,7 +53,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Con Scoperta URL e Memoria Globale)
+# 🗓️ FASE 1: DOWNLOAD CALENDARI (Senza il bug del "furto")
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
@@ -71,12 +71,11 @@ def spider_calendari_nazionale():
         print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
         all_gare_fondo = []
         
-        # 🕵️‍♂️ IL RITORNO DELLA FASE DI SCOPERTA: Troviamo la porta esatta del comitato
+        # 🕵️‍♂️ FASE DI SCOPERTA BLINDATA (Abbiamo tolto il fallback all'URL generico)
         url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/"
-        for percorso in ["calendario", "calendario-gare", "gare", "competizioni", ""]:
-            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
+        for percorso in ["calendario", "calendario-gare", "gare", "competizioni", "calendario-eventi"]:
+            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/"
             try:
-                # Test veloce per vedere se l'API risponde con dei dati validi
                 test_params = {"action": "competizioni_get_all", "offset": 0, "limit": 2, "url": test_url, "idStagione": str(anno_massimo)}
                 r_test = session.get(BASE_URL_AJAX, params=test_params, timeout=10)
                 if r_test.status_code == 200 and len(r_test.json()) > 0:
@@ -91,7 +90,7 @@ def spider_calendari_nazionale():
                 "action": "competizioni_get_all",
                 "offset": 0,
                 "limit": 100,
-                "url": url_chiave, # 🎯 ORA USA L'URL CORRETTO PER LA REGIONE
+                "url": url_chiave, 
                 "idStagione": str(anno),
                 "disciplina": "", 
                 "dataInizio": "01/01/2010",
@@ -120,6 +119,7 @@ def spider_calendari_nazionale():
                             gare_viste_globali.add(id_comp)
                             
                             livello_gara = str(item.get("livello", "")).upper()
+                            # Le gare nazionali mantengono l'etichetta globale per evitare favoritismi
                             if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
                                 comitato_assegnato = "Nazionale/Internazionale"
                             else:
