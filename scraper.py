@@ -23,24 +23,28 @@ session.headers.update(HEADERS)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
+# 🥇 ORDINE STRATEGICO ANTI-FURTO: 
+# Mettiamo in cima i comitati del Nord con calendari ben configurati. 
+# In questo modo, il Veneto si "appropria" delle sue gare prima 
+# che la Campania (con il sito buggato) possa rubarle leggendo il database nazionale!
 COMITATI_FISI = {
-    'Abruzzo (CAB)': 'abruzzo',
+    'Trentino (TN)': 'trentino',
     'Alto Adige (AA)': 'alto-adige',           
+    'Veneto (VE)': 'veneto',
     'Alpi Centrali (AC)': 'alpi-centrali',     
     'Alpi Occidentali (AOC)': 'alpi-occidentali', 
+    'Valdostano (ASIVA)': 'asiva',
+    'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
     'Appennino Emiliano (CAE)': 'appennino-emiliano', 
     'Appennino Toscano (CAT)': 'appennino-toscano',   
-    'Calabro Lucano (CAL)': 'calabro-lucano',
-    'Campano (CAM)': 'campano',
-    'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
+    'Abruzzo (CAB)': 'abruzzo',
     'Lazio e Sardegna (CLS)': 'lazio-sardegna',
     'Ligure (LIG)': 'ligure',
+    'Umbro Marchigiano (CUM)': 'umbro-marchigiano',
+    'Campano (CAM)': 'campano',
+    'Calabro Lucano (CAL)': 'calabro-lucano',
     'Pugliese (PUG)': 'pugliese',
     'Siculo (SIC)': 'siculo',
-    'Trentino (TN)': 'trentino',
-    'Umbro Marchigiano (CUM)': 'umbro-marchigiano',
-    'Valdostano (ASIVA)': 'asiva',
-    'Veneto (VE)': 'veneto'
 }
 
 def calcola_stagione_fisi(data_gara):
@@ -53,7 +57,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Senza il bug del "furto")
+# 🗓️ FASE 1: DOWNLOAD CALENDARI
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
@@ -71,9 +75,8 @@ def spider_calendari_nazionale():
         print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
         all_gare_fondo = []
         
-        # 🕵️‍♂️ FASE DI SCOPERTA BLINDATA (Abbiamo tolto il fallback all'URL generico)
         url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/"
-        for percorso in ["calendario", "calendario-gare", "gare", "competizioni", "calendario-eventi"]:
+        for percorso in ["calendario", "calendario-gare", "gare", "competizioni"]:
             test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/"
             try:
                 test_params = {"action": "competizioni_get_all", "offset": 0, "limit": 2, "url": test_url, "idStagione": str(anno_massimo)}
@@ -106,6 +109,7 @@ def spider_calendari_nazionale():
                     for item in data:
                         id_comp = str(item.get("idCompetizione"))
                         
+                        # 🛡️ BARRIERA ANTI-FURTO: Se il Veneto l'ha già presa, la Campania la salta!
                         if id_comp in gare_viste_globali:
                             continue
                             
@@ -119,7 +123,6 @@ def spider_calendari_nazionale():
                             gare_viste_globali.add(id_comp)
                             
                             livello_gara = str(item.get("livello", "")).upper()
-                            # Le gare nazionali mantengono l'etichetta globale per evitare favoritismi
                             if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
                                 comitato_assegnato = "Nazionale/Internazionale"
                             else:
@@ -148,7 +151,7 @@ def spider_calendari_nazionale():
         time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (Invariata)
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI
 # =====================================================================
 def spider_atleti_master():
     print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
