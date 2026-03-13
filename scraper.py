@@ -53,7 +53,7 @@ def calcola_stagione_fisi(data_gara):
     return "2026"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Con Memoria Globale Anti-Cloni)
+# 🗓️ FASE 1: DOWNLOAD CALENDARI (Con Scoperta URL e Memoria Globale)
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
@@ -65,19 +65,33 @@ def spider_calendari_nazionale():
     
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
-    # 🧠 MEMORIA GLOBALE: Si ricorda tutte le gare estratte finora per evitare i cloni!
     gare_viste_globali = set()
     
     for nome_comitato, slug_sito in COMITATI_FISI.items():
         print(f"\n🌍 Analizzo: {nome_comitato}...", flush=True)
         all_gare_fondo = []
         
+        # 🕵️‍♂️ IL RITORNO DELLA FASE DI SCOPERTA: Troviamo la porta esatta del comitato
+        url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/"
+        for percorso in ["calendario", "calendario-gare", "gare", "competizioni", ""]:
+            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
+            try:
+                # Test veloce per vedere se l'API risponde con dei dati validi
+                test_params = {"action": "competizioni_get_all", "offset": 0, "limit": 2, "url": test_url, "idStagione": str(anno_massimo)}
+                r_test = session.get(BASE_URL_AJAX, params=test_params, timeout=10)
+                if r_test.status_code == 200 and len(r_test.json()) > 0:
+                    url_chiave = test_url
+                    print(f"   🔑 URL corretto trovato: {url_chiave}", flush=True)
+                    break
+            except Exception:
+                pass
+
         for anno in stagioni_da_scaricare:
             params = {
                 "action": "competizioni_get_all",
                 "offset": 0,
                 "limit": 100,
-                "url": f"https://comitati.fisi.org/{slug_sito}/calendario/",
+                "url": url_chiave, # 🎯 ORA USA L'URL CORRETTO PER LA REGIONE
                 "idStagione": str(anno),
                 "disciplina": "", 
                 "dataInizio": "01/01/2010",
@@ -93,7 +107,6 @@ def spider_calendari_nazionale():
                     for item in data:
                         id_comp = str(item.get("idCompetizione"))
                         
-                        # 🛡️ SCUDO ANTI-CLONI: Se l'abbiamo già salvata in un'altra regione, ignorala!
                         if id_comp in gare_viste_globali:
                             continue
                             
@@ -104,10 +117,8 @@ def spider_calendari_nazionale():
                         is_proibita = any(parola in nome_gara for parola in LISTA_NERA) or any(parola in disciplina_ufficiale for parola in LISTA_NERA)
                         
                         if is_fondo and not is_proibita:
-                            # Segnamo l'ID come visto per sempre
                             gare_viste_globali.add(id_comp)
                             
-                            # 🎯 ASSEGNAZIONE INTELLIGENTE DEL COMITATO (Legge il Livello Gara)
                             livello_gara = str(item.get("livello", "")).upper()
                             if "NAZIONAL" in livello_gara or "INTERNAZIONAL" in livello_gara or "WORLD" in livello_gara:
                                 comitato_assegnato = "Nazionale/Internazionale"
@@ -137,7 +148,7 @@ def spider_calendari_nazionale():
         time.sleep(0.3)
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI (Semplice e Veloce)
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (Invariata)
 # =====================================================================
 def spider_atleti_master():
     print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
@@ -156,15 +167,12 @@ def spider_atleti_master():
         
         if not id_comp or not nome_comitato_gara: continue
         
-        # CONTROLLO: La gara è già in Supabase?
         controllo_db = supabase.table("Risultati").select("id_comp_collegata").eq("id_comp_collegata", id_comp).limit(1).execute()
         if len(controllo_db.data) > 0:
             print(f"   ⏩ Già scaricata, salto: {nome_g}", flush=True)
             continue
 
-        # Gestione del routing per le gare Nazionali
         slug_sito = COMITATI_FISI.get(nome_comitato_gara, "trentino") 
-        
         stagione_fisi = calcola_stagione_fisi(data_g)
         print(f"\n🟢 Scarico: {nome_g} ({luogo_g} - {data_g})", flush=True)
         
@@ -204,7 +212,6 @@ def spider_atleti_master():
                 i = 0
                 while i < len(testi_atleti) - 7:
                     if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
-                        
                         batch_atleti.append({
                             "id_gara_fisi": id_g, 
                             "id_comp_collegata": id_comp, 
@@ -216,7 +223,7 @@ def spider_atleti_master():
                             "gara_nome": nome_g,
                             "luogo": luogo_g,
                             "data_gara": data_g,
-                            "comitato": nome_comitato_gara # L'atleta prende semplicemente il comitato della gara
+                            "comitato": nome_comitato_gara 
                         })
                         i += 8
                     else:
