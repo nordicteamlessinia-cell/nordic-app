@@ -17,22 +17,7 @@ session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
-
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
-session.headers.update(HEADERS)
-
-BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
-
-# 🗺️ ELENCO COMITATI PER LE CHIAMATE API
-COMITATI_FISI = {
-    'Trentino (TN)': 'trentino', 'Alto Adige (AA)': 'alto-adige', 'Veneto (VE)': 'veneto',
-    'Alpi Centrali (AC)': 'alpi-centrali', 'Alpi Occidentali (AOC)': 'alpi-occidentali', 
-    'Valdostano (ASIVA)': 'asiva', 'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
-    'Appennino Emiliano (CAE)': 'appennino-emiliano', 'Appennino Toscano (CAT)': 'appennino-toscano',   
-    'Abruzzo (CAB)': 'abruzzo', 'Lazio e Sardegna (CLS)': 'lazio-sardegna', 'Ligure (LIG)': 'ligure',
-    'Umbro Marchigiano (CUM)': 'umbro-marchigiano', 'Campano (CAM)': 'campano',
-    'Calabro Lucano (CAL)': 'calabro-lucano', 'Pugliese (PUG)': 'pugliese', 'Siculo (SIC)': 'siculo'
-}
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'})
 
 # 🎯 DECODER DEL DNA (Infallibile)
 MAPPA_SIGLE = {
@@ -46,6 +31,16 @@ MAPPA_SIGLE = {
     'VA': 'Valdostano (ASIVA)', 'VE': 'Veneto (VE)'
 }
 
+COMITATI_SLUG = {
+    'Trentino (TN)': 'trentino', 'Alto Adige (AA)': 'alto-adige', 'Veneto (VE)': 'veneto',
+    'Alpi Centrali (AC)': 'alpi-centrali', 'Alpi Occidentali (AOC)': 'alpi-occidentali', 
+    'Valdostano (ASIVA)': 'asiva', 'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
+    'Appennino Emiliano (CAE)': 'appennino-emiliano', 'Appennino Toscano (CAT)': 'appennino-toscano',   
+    'Abruzzo (CAB)': 'abruzzo', 'Lazio e Sardegna (CLS)': 'lazio-sardegna', 'Ligure (LIG)': 'ligure',
+    'Umbro Marchigiano (CUM)': 'umbro-marchigiano', 'Campano (CAM)': 'campano',
+    'Calabro Lucano (CAL)': 'calabro-lucano', 'Pugliese (PUG)': 'pugliese', 'Siculo (SIC)': 'siculo'
+}
+
 def calcola_stagione_fisi(data_gara):
     try:
         if not data_gara or data_gara == "N/D": return "2026"
@@ -54,35 +49,40 @@ def calcola_stagione_fisi(data_gara):
     except: pass
     return "2026"
 
-def estrai_comitato_reale(item, fallback_comitato):
-    """Il Test del DNA: cerca le sigle nascoste nel JSON della gara"""
-    # 1. Cerca il comitato dichiarato nell'API
-    sigla = str(item.get("codiceComitato", "")).strip().upper()
-    if not sigla:
-        sigla = str(item.get("comitato", "")).strip().upper()
-
-    if sigla in MAPPA_SIGLE:
-        return MAPPA_SIGLE[sigla]
-
-    # 2. Cerca nel Codice Società Organizzatrice (Es. VE0036)
-    cod_soc = str(item.get("codiceSocieta", "")).strip().upper()
-    for sigla_mappa in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
-        if cod_soc.startswith(sigla_mappa):
-            return MAPPA_SIGLE[sigla_mappa]
-
-    # 3. Fallback per le vere gare internazionali
-    livello = str(item.get("livello", "")).upper()
+def estrai_comitato_reale(item):
+    """IL CAPPELLO PARLANTE: Analizza il DNA della gara ed emette la sentenza"""
+    if not isinstance(item, dict): return "Sconosciuto"
+    
+    # 1. Pialliamo tutto in maiuscolo così i programmatori FISI non ci fregano coi nomi strani
+    item_u = {str(k).upper(): str(v).strip().upper() for k, v in item.items() if v is not None}
+    
+    # 2. Controllo livello (Gare Mondiali/Internazionali)
+    livello = item_u.get("LIVELLO", "")
     if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
-        return "Internazionale/FIS"
+        return "Nazionale/Internazionale"
 
-    # 4. Nessuna traccia di DNA? Ci fidiamo del portale che stiamo interrogando.
-    return fallback_comitato
+    # 3. Controllo Sigla Diretta
+    for key in ["COMITATO", "CODICECOMITATO", "SIGLACOMITATO", "CODICECRD"]:
+        sigla = item_u.get(key, "")
+        if sigla in MAPPA_SIGLE:
+            return MAPPA_SIGLE[sigla]
+
+    # 4. IL TEST INFALLIBILE: Codice Società Organizzatrice (Es: TN0014 -> Trentino)
+    for key in ["CODICESOCIETA", "SOCIETA", "SOCIETAORGANIZZATRICE"]:
+        cod_soc = item_u.get(key, "")
+        # Controlliamo prima le sigle a 3 lettere (es. FVG), poi a 2 (es. VE)
+        for sigla_mappa in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
+            if cod_soc.startswith(sigla_mappa):
+                return MAPPA_SIGLE[sigla_mappa]
+                
+    # Se la gara non ha targa, finisce qui per non sporcare i comitati buoni
+    return "Nazionale / Sconosciuto"
 
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD CALENDARI (Paginazione + DNA)
+# 🗓️ FASE 1: BOMBARDAMENTO A TAPPETO (Cerca ovunque)
 # =====================================================================
 def spider_calendari_nazionale():
-    print("--- 🚀 FASE 1: SINCRONIZZAZIONE CALENDARI NAZIONALI ---", flush=True)
+    print("--- 🚀 FASE 1: RICERCA GLOBALE E SMISTAMENTO ALGORITMICO ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
@@ -92,97 +92,89 @@ def spider_calendari_nazionale():
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
     gare_viste_globali = set()
-    totale_gare_salvate = 0
+    all_gare_fondo = []
     
-    for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Bussiamo alla porta di: {nome_comitato}...", flush=True)
-        all_gare_fondo = []
+    # Due server da interrogare: Quello Master e quello Multisite
+    SERVER_APIS = [
+        "https://fisi.org/wp-admin/admin-ajax.php", 
+        "https://comitati.fisi.org/wp-admin/admin-ajax.php"
+    ]
+    
+    for anno in stagioni_da_scaricare:
+        print(f"\n📅 Scansione Calendario {anno} in corso...", flush=True)
         
-        # Troviamo la porta giusta
-        url_chiave = f"https://comitati.fisi.org/{slug_sito}/calendario/"
-        for percorso in ["calendario", "calendario-gare", "gare", "competizioni", ""]:
-            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
-            try:
-                test_params = {"action": "competizioni_get_all", "offset": 0, "limit": 2, "url": test_url, "idStagione": str(anno_massimo)}
-                r_test = session.get(BASE_URL_AJAX, params=test_params, timeout=10)
-                if r_test.status_code == 200 and isinstance(r_test.json(), list):
-                    url_chiave = test_url
-                    print(f"   🔑 Server agganciato: {url_chiave}", flush=True)
-                    break
-            except Exception:
-                pass
-
-        for anno in stagioni_da_scaricare:
-            offset = 0
-            limit = 100 # Chiediamo 100 gare alla volta, senza stancare il server
-            
-            while True:
-                params = {
-                    "action": "competizioni_get_all",
-                    "offset": offset,
-                    "limit": limit, 
-                    "url": url_chiave, 
-                    "idStagione": str(anno)
-                }
+        for api_url in SERVER_APIS:
+            for sigla, nome_esteso in MAPPA_SIGLE.items():
+                offset = 0
+                limit = 200
                 
-                try:
-                    r = session.get(BASE_URL_AJAX, params=params, timeout=30)
-                    data = r.json()
-                    if not data or not isinstance(data, list) or len(data) == 0: 
-                        break # Pagina vuota, anno finito
-
-                    for item in data:
-                        id_comp = str(item.get("idCompetizione"))
-                        
-                        if id_comp in gare_viste_globali:
-                            continue # Già salvata
-                            
-                        disciplina = str(item.get("disciplina", "")).upper()
-                        nome_gara = str(item.get("nome", "")).upper()
-                        
-                        is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
-                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
-                        is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
-                        
-                        if is_fondo and not is_proibita:
-                            gare_viste_globali.add(id_comp)
-                            
-                            # 🎯 TEST DEL DNA
-                            comitato_vero = estrai_comitato_reale(item, nome_comitato)
-
-                            record = {
-                                "id_gara_fisi": id_comp, 
-                                "gara_nome": item.get("nome"),
-                                "luogo": item.get("comune", "N/D"), 
-                                "data_gara": item.get("dataInizio", "N/D"), 
-                                "comitato": comitato_vero 
-                            }
-                            all_gare_fondo.append(record)
+                while True:
+                    # Forziamo il server a darci questa precisa sigla
+                    params = {
+                        "action": "competizioni_get_all",
+                        "offset": offset,
+                        "limit": limit,
+                        "idStagione": str(anno),
+                        "comitato": sigla 
+                    }
                     
-                    if len(data) < limit:
-                        break # Ultima pagina raggiunta
-                        
-                    offset += limit 
-                    
-                except Exception:
-                    break
+                    # Se interroghiamo il server secondario, proviamo anche a ingannarlo con l'URL
+                    if "comitati" in api_url:
+                        slug = COMITATI_SLUG.get(nome_esteso, "trentino")
+                        params["url"] = f"https://comitati.fisi.org/{slug}/calendario/"
 
+                    try:
+                        r = session.get(api_url, params=params, timeout=15)
+                        data = r.json()
+                        
+                        if not data or not isinstance(data, list) or len(data) == 0: 
+                            break # Pagina vuota
+
+                        for item in data:
+                            id_comp = str(item.get("idCompetizione"))
+                            if id_comp in gare_viste_globali: continue
+                                
+                            disciplina = str(item.get("disciplina", "")).upper()
+                            nome_gara = str(item.get("nome", "")).upper()
+                            
+                            is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
+                                       any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
+                            is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
+                            
+                            if is_fondo and not is_proibita:
+                                gare_viste_globali.add(id_comp)
+                                
+                                # 🎩 LA MAGIA DEL CAPPELLO PARLANTE
+                                comitato_vero = estrai_comitato_reale(item)
+
+                                record = {
+                                    "id_gara_fisi": id_comp, 
+                                    "gara_nome": item.get("nome"),
+                                    "luogo": item.get("comune", "N/D"), 
+                                    "data_gara": item.get("dataInizio", "N/D"), 
+                                    "comitato": comitato_vero 
+                                }
+                                all_gare_fondo.append(record)
+                                
+                        if len(data) < limit: break
+                        offset += limit
+                        
+                    except Exception:
+                        break # In caso di errore server, passa alla sigla successiva
+        
+        # Salvataggio anno per anno
         if all_gare_fondo:
             supabase.table("Gare").upsert(all_gare_fondo).execute()
-            totale_gare_salvate += len(all_gare_fondo)
-            print(f"   ✅ Salvate {len(all_gare_fondo)} gare estratte da questo server.", flush=True)
-        else:
-            print(f"   ⏩ Nessuna gara compatibile trovata.", flush=True)
-        
-        time.sleep(0.3)
-        
-    print(f"\n🏆 FASE 1 COMPLETATA! Totale Gare Fondo in Italia: {totale_gare_salvate}", flush=True)
+            print(f"   ✅ Trovate e smistate {len(all_gare_fondo)} gare finora.", flush=True)
+
+    print("\n🏆 FASE 1 COMPLETATA! I server sono stati setacciati.", flush=True)
+
 
 # =====================================================================
-# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI (Da lanciare DOPO il test)
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI
 # =====================================================================
 def spider_atleti_master():
-    pass # Lasciamo vuoto per il test
+    pass # Disattivata per il test! 
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
