@@ -1,174 +1,140 @@
 import os
-import re  # <--- NUOVO STRUMENTO: Le Espressioni Regolari (La Lavatrice)
-from bs4 import BeautifulSoup
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
+import datetime
 from supabase import create_client
-from playwright.sync_api import sync_playwright
 
-# 🔑 INIZIALIZZA SUPABASE 
+# 🟢 INIZIALIZZAZIONE SUPABASE
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("⚠️ ERRORE: Variabili d'ambiente Supabase mancanti!")
-    exit()
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-BASE_URL = "https://www.fis-ski.com"
 
-# 🕰️ GLI ANNI CHE VOGLIAMO SCARICARE
-STAGIONI = ["2023", "2024", "2025", "2026"]
+# 🛡️ ARMATURA DI RETE
+session = requests.Session()
+retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
+session.mount('https://', HTTPAdapter(max_retries=retries))
+session.mount('http://', HTTPAdapter(max_retries=retries))
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'})
 
-def scraper_fis_master():
-    print("--- 🌍 AVVIO SCRAPER FIS (PULIZIA STRINGHE ATTIVA) ---")
+# Torniamo al server che ci rispondeva, ma lo usiamo in modo più intelligente
+BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
+
+# 🎯 LE CHIAVI DI ACCESSO PER IL DATABASE
+MAPPA_SIGLE = {
+    'AA': 'Alto Adige (AA)', 'AC': 'Alpi Centrali (AC)', 'AOC': 'Alpi Occidentali (AOC)',
+    'ASIVA': 'Valdostano (ASIVA)', 'CAB': 'Abruzzo (CAB)', 'CAE': 'Appennino Emiliano (CAE)',
+    'CAL': 'Calabro Lucano (CAL)', 'CAM': 'Campano (CAM)', 'CAT': 'Appennino Toscano (CAT)',
+    'CLS': 'Lazio e Sardegna (CLS)', 'CUM': 'Umbro Marchigiano (CUM)', 'FVG': 'Friuli Venezia Giulia (FVG)',
+    'LIG': 'Ligure (LIG)', 'PUG': 'Pugliese (PUG)', 'SIC': 'Siculo (SIC)', 'TN': 'Trentino (TN)',
+    'VE': 'Veneto (VE)'
+}
+
+def estrai_comitato_reale(item, sigla_richiesta):
+    """Il Test del DNA finale"""
+    livello = str(item.get("livello", "")).upper()
+    if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
+        return "Nazionale/Internazionale"
+
+    # 1. Leggiamo la sigla dal JSON
+    c = str(item.get("codiceComitato", "")).strip().upper()
+    if not c: c = str(item.get("comitato", "")).strip().upper()
+    if c in MAPPA_SIGLE: return MAPPA_SIGLE[c]
+
+    # 2. Leggiamo la targa dello Sci Club (es. FVG0014)
+    soc = str(item.get("codiceSocieta", "")).strip().upper()
+    for s in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
+        if soc.startswith(s): return MAPPA_SIGLE[s]
+
+    # 3. Se tutto fallisce, gli assegniamo la sigla che avevamo richiesto all'API
+    if sigla_richiesta in MAPPA_SIGLE: return MAPPA_SIGLE[sigla_richiesta]
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    return "Sconosciuto"
+
+# =====================================================================
+# 🗓️ FASE 1: INTERROGAZIONE CHIRURGICA DEL DATABASE
+# =====================================================================
+def spider_calendari_nazionale():
+    print("--- 🚀 FASE 1: SCANSIONE CHIRURGICA PER COMITATO ---", flush=True)
+    
+    anno_corrente = datetime.datetime.now().year
+    mese_corrente = datetime.datetime.now().month
+    anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
+    stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
+    
+    LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
+    gare_viste_globali = set()
+    totale_salvate = 0
+    
+    for anno in stagioni_da_scaricare:
+        print(f"\n📅 Elaborazione Anno {anno}...", flush=True)
+        all_gare_fondo = []
         
-        for stagione in STAGIONI:
-            print(f"\n==========================================")
-            print(f"🎿 INIZIO SCANSIONE STAGIONE: {stagione}")
-            print(f"==========================================")
+        # Facciamo una richiesta specifica per ogni singola regione!
+        for sigla, nome_esteso in MAPPA_SIGLE.items():
+            offset = 0
+            limit = 200
             
-            URL_CALENDARIO = f"{BASE_URL}/DB/cross-country/calendar-results.html?sectorcode=CC&nationcode=ita&seasoncode={stagione}"
-            
-            page.goto(URL_CALENDARIO, timeout=60000)
-            page.wait_for_timeout(5000) 
-            soup = BeautifulSoup(page.content(), 'html.parser')
-            
-            link_eventi = []
-            for a in soup.find_all('a', href=True):
-                if 'eventid=' in a['href']:
-                    link_eventi.append(a['href'])
-                    
-            link_eventi = list(set(link_eventi)) 
-            if not link_eventi:
-                continue
-
-            link_gare = []
-            for ev in link_eventi: 
-                url_ev = BASE_URL + ev if not ev.startswith('http') else ev
-                page.goto(url_ev, timeout=60000)
-                page.wait_for_timeout(2000)
+            while True:
+                # Questa è la chiave: forziamo il comitato nei parametri dell'API
+                params = {
+                    "action": "competizioni_get_all",
+                    "idStagione": str(anno),
+                    "comitato": sigla, 
+                    "limit": limit,
+                    "offset": offset
+                }
                 
-                ev_soup = BeautifulSoup(page.content(), 'html.parser')
-                for a in ev_soup.find_all('a', href=True):
-                    if 'raceid=' in a['href']:
-                        link_gare.append(a['href'])
+                try:
+                    r = session.get(BASE_URL_AJAX, params=params, timeout=15)
+                    data = r.json()
+                    
+                    if not data or not isinstance(data, list) or len(data) == 0:
+                        break # Pagina vuota, passiamo alla prossima sigla
                         
-            link_gare = list(set(link_gare))
-            print(f"🎯 Trovate {len(link_gare)} gare nel {stagione}.\n")
-
-            for link in link_gare: 
-                url_gara = BASE_URL + link if not link.startswith('http') else link
-                id_gara_fis = link.split('raceid=')[1].split('&')[0] if 'raceid=' in link else "N/D"
-                
-                print(f"⛷️ Analizzo Gara ID: {id_gara_fis}")
-                page.goto(url_gara, timeout=60000)
-                page.wait_for_timeout(2500)
-                
-                gara_soup = BeautifulSoup(page.content(), 'html.parser')
-                
-                # --- 🧠 MOTORE SEMANTICO DI ESTRAZIONE ---
-                luogo = "Italia"
-                data_gara = stagione
-                specialita = "N/D"
-                categoria = "FIS" 
-                
-                h1 = gara_soup.find('h1')
-                if h1:
-                    luogo = h1.text.replace("junior", "").replace("Junior", "").strip()
-                
-                header_texts = []
-                for tag in gara_soup.find_all(['h1', 'h2', 'h3', 'div', 'span', 'p']):
-                    testo = tag.get_text(separator=" ", strip=True)
-                    if testo and len(testo) < 60 and testo not in header_texts:
-                        header_texts.append(testo)
-                
-                for testo in header_texts:
-                    t_low = testo.lower()
-                    
-                    # 🎯 Trova la DISCIPLINA e la PASSA NELLA "LAVATRICE"
-                    if any(x in t_low for x in ['km', 'sprint', 'skiathlon', 'pursuit', 'mass start', 'relay']):
-                        if specialita == "N/D":
-                            pulita = testo
-                            # 1. Taglia via tutto quello che c'è dopo la sbarretta (es. " | EYOF ▾")
-                            pulita = pulita.split('|')[0]
-                            # 2. Usa Regex per cancellare eventuali date all'inizio (es. "23.01.2023 - ")
-                            pulita = re.sub(r"^\s*\d{2}\.\d{2}\.\d{4}\s*-\s*", "", pulita)
-                            # 3. Toglie le freccette del menu a tendina e gli spazi in eccesso
-                            pulita = pulita.replace("▾", "").replace("▼", "").strip()
+                    for item in data:
+                        id_comp = str(item.get("idCompetizione"))
+                        if id_comp in gare_viste_globali: continue
                             
-                            specialita = pulita
-                            
-                    # 🎯 Trova la CATEGORIA
-                    if 'junior' in t_low:
-                        categoria = "Junior"
-                    elif 'u23' in t_low:
-                        categoria = "U23"
-                    elif 'world cup' in t_low:
-                        categoria = "World Cup"
-                    elif 'alpen' in t_low or 'opa' in t_low:
-                        categoria = "Alpen Cup / OPA"
-                    elif 'championship' in t_low:
-                        categoria = "Championship"
-                    elif 'national' in t_low:
-                        categoria = "National Race"
+                        disciplina = str(item.get("disciplina", "")).upper()
+                        nome_gara = str(item.get("nome", "")).upper()
                         
-                    # 🎯 Trova la DATA
-                    elif any(month in t_low for month in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', '2023', '2024', '2025', '2026']):
-                        if any(char.isdigit() for char in testo) and len(testo) < 20:
-                            data_gara = testo
-                # ----------------------------------------
-
-                righe_atleti = gara_soup.find_all('div', class_='g-row')
-                if not righe_atleti:
-                    righe_atleti = gara_soup.find_all('a', class_='pr-1')
-                    
-                batch_risultati = []
-                
-                for riga in righe_atleti:
-                    testi = [t.strip() for t in riga.stripped_strings if t.strip()]
-                    if len(testi) >= 5:
-                        try:
-                            codice_fis = next((t for t in testi if len(t) >= 6 and t.isdigit()), "N/D")
-                            tempo = next((t for t in testi if ":" in t), "N/D")
-                            punti_str = next((t for t in reversed(testi) if "." in t and t.replace('.','',1).isdigit()), "0.00")
+                        is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
+                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
+                        is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
+                        
+                        if is_fondo and not is_proibita:
+                            gare_viste_globali.add(id_comp)
                             
-                            nome = "N/D"
-                            for t in testi:
-                                if not t.isdigit() and ":" not in t and "." not in t and len(t) > 4 and t != "ITA":
-                                    nome = t
-                                    break
-                                    
-                            nazione = "ITA" if "ITA" in testi else "N/D"
-                            posizione_pulita = int(testi[0]) if testi[0].isdigit() else None
-                            punti_puliti = float(punti_str) if punti_str != "0.00" else None
+                            comitato_vero = estrai_comitato_reale(item, sigla)
 
-                            batch_risultati.append({
-                                "id_gara_fis": id_gara_fis,
-                                "data_gara": data_gara,
-                                "luogo": luogo,
-                                "posizione": posizione_pulita,
-                                "codice_fis": codice_fis,
-                                "atleta_nome": nome,
-                                "nazione": nazione,
-                                "tempo": tempo,
-                                "punti_fis": punti_puliti,
-                                "categoria": categoria,      
-                                "specialita": specialita     # ORA ENTRA SUPER PULITA!
-                            })
-                        except:
-                            continue 
-                
-                if batch_risultati:
-                    supabase.table("Risultati_Fis").upsert(batch_risultati).execute()
-                    print(f"   ✅ Salvati {len(batch_risultati)} atleti | Cat: {categoria} | Disp: {specialita}")
-                else:
-                    print("   ⚠️ Nessun atleta o formato non standard.")
+                            record = {
+                                "id_gara_fisi": id_comp, 
+                                "gara_nome": item.get("nome", "Gara Senza Nome"),
+                                "luogo": item.get("comune", "N/D"), 
+                                "data_gara": item.get("dataInizio", "N/D"), 
+                                "comitato": comitato_vero 
+                            }
+                            all_gare_fondo.append(record)
+                            
+                    if len(data) < limit: break
+                    offset += limit
                     
-        print("\n🏁 DATABASE STORICO AGGIORNATO CON SUCCESSO!")
-        browser.close()
+                except Exception:
+                    break # In caso di errore, skippa
+            
+            time.sleep(0.1)
+            
+        if all_gare_fondo:
+            supabase.table("Gare").upsert(all_gare_fondo).execute()
+            totale_salvate += len(all_gare_fondo)
+            print(f"   ✅ Anno {anno} concluso: Salvate {len(all_gare_fondo)} gare di fondo.", flush=True)
+        else:
+            print(f"   ⏩ Anno {anno} concluso: Nessuna gara di fondo trovata.", flush=True)
+
+    print(f"\n🏆 FASE 1 COMPLETATA! Totale Assoluto Gare Italia: {totale_salvate}", flush=True)
 
 if __name__ == "__main__":
-    scraper_fis_master()
+    spider_calendari_nazionale()
+    # spider_atleti_master() <-- Fase 2 disattivata per il check veloce
