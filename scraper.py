@@ -3,148 +3,249 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
+import datetime
 from bs4 import BeautifulSoup
 from supabase import create_client
-import datetime
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🛡️ ARMATURA DI RETE (Simuliamo un browser umano)
+# 🛡️ ARMATURA DI RETE
 session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-}
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'}
 session.headers.update(HEADERS)
 
-COMITATI_FISI = {
-    'Trentino (TN)': 'trentino',
-    'Alto Adige (AA)': 'alto-adige',           
-    'Veneto (VE)': 'veneto',
-    'Alpi Centrali (AC)': 'alpi-centrali',     
-    'Alpi Occidentali (AOC)': 'alpi-occidentali', 
-    'Valdostano (ASIVA)': 'asiva',
-    'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
-    'Appennino Emiliano (CAE)': 'appennino-emiliano', 
-    'Appennino Toscano (CAT)': 'appennino-toscano',   
-    'Abruzzo (CAB)': 'abruzzo',
-    'Lazio e Sardegna (CLS)': 'lazio-sardegna',
-    'Ligure (LIG)': 'ligure',
-    'Umbro Marchigiano (CUM)': 'umbro-marchigiano',
-    'Campano (CAM)': 'campano',
-    'Calabro Lucano (CAL)': 'calabro-lucano',
-    'Pugliese (PUG)': 'pugliese',
-    'Siculo (SIC)': 'siculo',
+BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
+
+# 🗺️ DIZIONARIO INVERSO PER LA FASE 2
+COMITATI_SLUG = {
+    'Trentino (TN)': 'trentino', 'Alto Adige (AA)': 'alto-adige', 'Veneto (VE)': 'veneto',
+    'Alpi Centrali (AC)': 'alpi-centrali', 'Alpi Occidentali (AOC)': 'alpi-occidentali', 
+    'Valdostano (ASIVA)': 'asiva', 'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
+    'Appennino Emiliano (CAE)': 'appennino-emiliano', 'Appennino Toscano (CAT)': 'appennino-toscano',   
+    'Abruzzo (CAB)': 'abruzzo', 'Lazio e Sardegna (CLS)': 'lazio-sardegna', 'Ligure (LIG)': 'ligure',
+    'Umbro Marchigiano (CUM)': 'umbro-marchigiano', 'Campano (CAM)': 'campano',
+    'Calabro Lucano (CAL)': 'calabro-lucano', 'Pugliese (PUG)': 'pugliese', 'Siculo (SIC)': 'siculo',
+    'Nazionale/Internazionale': 'trentino' # Fallback per gare nazionali
 }
 
+# 🎯 IL DECODER DEL DNA (Codice Società -> Comitato)
+MAPPA_SIGLE = {
+    'CAB': 'Abruzzo (CAB)', 'AA': 'Alto Adige (AA)', 'AC': 'Alpi Centrali (AC)',
+    'AOC': 'Alpi Occidentali (AOC)', 'CAE': 'Appennino Emiliano (CAE)',
+    'CAT': 'Appennino Toscano (CAT)', 'CAL': 'Calabro Lucano (CAL)',
+    'CAM': 'Campano (CAM)', 'FVG': 'Friuli Venezia Giulia (FVG)',
+    'CLS': 'Lazio e Sardegna (CLS)', 'LIG': 'Ligure (LIG)',
+    'PUG': 'Pugliese (PUG)', 'SIC': 'Siculo (SIC)', 'TN': 'Trentino (TN)',
+    'CUM': 'Umbro Marchigiano (CUM)', 'ASIVA': 'Valdostano (ASIVA)',
+    'VA': 'Valdostano (ASIVA)', 'VE': 'Veneto (VE)'
+}
+
+def calcola_stagione_fisi(data_gara):
+    try:
+        if not data_gara or data_gara == "N/D": return "2026"
+        p = data_gara.split("/")
+        if len(p) == 3: return str(int(p[2]) + 1) if int(p[1]) >= 6 else str(p[2])
+    except: pass
+    return "2026"
+
+def estrai_comitato_reale(item):
+    """Il cuore dell'algoritmo: analizza il DNA della gara per scoprire il vero comitato"""
+    livello = str(item.get("livello", "")).upper()
+    if "NAZIONAL" in livello or "INTERNAZIONAL" in livello or "WORLD" in livello:
+        return "Nazionale/Internazionale"
+
+    # 1° Tentativo: Leggiamo la sigla ufficiale se presente
+    sigla = str(item.get("codiceComitato", "")).strip().upper()
+    if sigla in MAPPA_SIGLE: return MAPPA_SIGLE[sigla]
+
+    # 2° Tentativo: TEST DEL DNA sul Codice Società Organizzatrice (Infallibile)
+    cod_soc = str(item.get("codiceSocieta", "")).strip().upper()
+    # Controlliamo prima le sigle lunghe (es. CAB) poi quelle corte (es. VE)
+    for sigla_mappa in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
+        if cod_soc.startswith(sigla_mappa):
+            return MAPPA_SIGLE[sigla_mappa]
+            
+    return "Nazionale/Internazionale" # Se proprio è anonima, la mettiamo qui
+
 # =====================================================================
-# 🗓️ FASE 1: HTML SCRAPER (Legge i link direttamente dalle pagine visibili)
+# 🗓️ FASE 1: DOWNLOAD MASSIVO E SMISTAMENTO INTELLIGENTE
 # =====================================================================
-def spider_calendari_html():
-    print("--- 🚀 FASE 1: SCANSIONE FRONT-END (HTML) DEI CALENDARI ---", flush=True)
+def spider_calendari_nazionale():
+    print("--- 🚀 FASE 1: DOWNLOAD GLOBALE DEL CALENDARIO ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
     stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
+    LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     gare_viste_globali = set()
+    all_gare_fondo = []
     
-    for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Navigo sito HTML: {nome_comitato}...", flush=True)
-        all_gare_comitato = []
+    for anno in stagioni_da_scaricare:
+        print(f"\n📅 Elaborazione Stagione {anno}...", flush=True)
+        offset = 0
+        limit = 500 # Peschiamo le gare a enormi blocchi da 500
         
-        # Testiamo quale pagina HTML usa il comitato per mostrare le gare
-        percorsi_da_testare = ["competizioni", "calendario", "gare", "calendario-gare", ""]
-        url_base_comitato = None
-        
-        for percorso in percorsi_da_testare:
-            test_url = f"https://comitati.fisi.org/{slug_sito}/{percorso}/" if percorso else f"https://comitati.fisi.org/{slug_sito}/"
-            try:
-                # Simuliamo la visita umana alla pagina
-                res = session.get(test_url, timeout=15)
-                # Se la pagina esiste (200) e contiene la parola idComp (che sono i link alle gare)
-                if res.status_code == 200 and 'idComp=' in res.text:
-                    url_base_comitato = test_url
-                    print(f"   🔑 Pagina Web trovata: {url_base_comitato}", flush=True)
-                    break
-            except:
-                pass
-
-        if not url_base_comitato:
-            print(f"   ⏩ Nessuna pagina calendario HTML valida trovata per questo comitato.", flush=True)
-            continue
-
-        for anno in stagioni_da_scaricare:
-            # Aggiungiamo il parametro dell'anno come farebbe un utente che usa il menù a tendina
-            url_anno = f"{url_base_comitato}?d={anno}"
+        while True:
+            params = {
+                "action": "competizioni_get_all",
+                "offset": offset,
+                "limit": limit,
+                "url": "https://comitati.fisi.org/", # URL generico per farci dare tutto il blocco nazionale!
+                "idStagione": str(anno)
+            }
             
             try:
-                res = session.get(url_anno, timeout=20)
-                soup = BeautifulSoup(res.text, 'html.parser')
-                
-                # Cerchiamo TUTTI i link <a> presenti nella pagina
-                links = soup.find_all('a', href=True)
-                
-                contatore_anno = 0
-                for link in links:
-                    href = link['href']
-                    
-                    # Se il link porta a una competizione
-                    if 'idComp=' in href:
-                        try:
-                            # Estraiamo il numero magico (l'ID della gara) direttamente dall'URL
-                            id_comp = href.split('idComp=')[1].split('&')[0]
-                            
-                            if id_comp in gare_viste_globali:
-                                continue
-                                
-                            nome_gara_html = link.get_text(strip=True).upper()
-                            
-                            # Filtro basilare visivo per assicurarci che sia sci di fondo
-                            is_fondo = any(k in nome_gara_html for k in ["FONDO", "LANGLAUF", "TROFEO", "COPPA", "MEMORIAL", "CAMPIONATO", "REGIONALE", "XC"])
-                            is_alpino = any(k in nome_gara_html for k in ["ALPINO", "SLALOM", "GIGANTE", "DISCESA", "SNOWBOARD", "BIATHLON"])
-                            
-                            # Se l'HTML della riga della tabella non contiene il nome, lo prenderemo in modo definitivo nella Fase 2
-                            if not nome_gara_html:
-                                nome_gara_html = "GARA IN FASE DI DOWNLOAD"
-                            
-                            if not is_alpino:
-                                gare_viste_globali.add(id_comp)
-                                
-                                # IL PUNTO CRUCIALE: Assegniamo forzatamente il comitato della pagina che stiamo guardando!
-                                record = {
-                                    "id_gara_fisi": id_comp, 
-                                    "gara_nome": nome_gara_html,
-                                    "luogo": "Da scaricare", # Verrà aggiornato precisamente dalla Fase 2
-                                    "data_gara": f"01/01/{anno}", # Data temporanea, verrà sovrascritta dalla Fase 2
-                                    "comitato": nome_comitato 
-                                }
-                                all_gare_comitato.append(record)
-                                contatore_anno += 1
-                        except:
-                            pass
-                            
-            except Exception as e:
-                pass
+                r = session.get(BASE_URL_AJAX, params=params, timeout=30)
+                data = r.json()
+                if not data or not isinstance(data, list) or len(data) == 0: 
+                    break # Abbiamo finito le pagine di questo anno
 
-        if all_gare_comitato:
-            supabase.table("Gare").upsert(all_gare_comitato).execute()
-            print(f"   ✅ Salvati {len(all_gare_comitato)} link unici di gare per il {nome_comitato}.", flush=True)
-        else:
-            print(f"   ⏩ Nessuna gara compatibile trovata nell'HTML.", flush=True)
+                print(f"   📥 Scaricate {len(data)} gare grezze (paginazione: {offset}). Analisi del DNA in corso...", flush=True)
+
+                for item in data:
+                    id_comp = str(item.get("idCompetizione"))
+                    if id_comp in gare_viste_globali: continue
+                        
+                    disciplina = str(item.get("disciplina", "")).upper()
+                    nome_gara = str(item.get("nome", "")).upper()
+                    
+                    is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
+                               any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
+                    is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
+                    
+                    if is_fondo and not is_proibita:
+                        gare_viste_globali.add(id_comp)
+                        
+                        # ✨ Magia: Affidiamo al decoder la scelta della regione
+                        comitato_vero = estrai_comitato_reale(item)
+
+                        record = {
+                            "id_gara_fisi": id_comp, 
+                            "gara_nome": item.get("nome"),
+                            "luogo": item.get("comune", "N/D"), 
+                            "data_gara": item.get("dataInizio", "N/D"), 
+                            "comitato": comitato_vero 
+                        }
+                        all_gare_fondo.append(record)
+                
+                if len(data) < limit: break # Fine delle pagine
+                offset += limit
+                
+            except Exception as e:
+                print(f"   ⚠️ Errore di rete, passo alla prossima pagina...", flush=True)
+                break
+
+    if all_gare_fondo:
+        # Dividiamo in pacchetti da 1000 per non far esplodere Supabase
+        for i in range(0, len(all_gare_fondo), 1000):
+            pacchetto = all_gare_fondo[i:i+1000]
+            supabase.table("Gare").upsert(pacchetto).execute()
+        print(f"\n✅ TRIONFO: {len(all_gare_fondo)} gare di Fondo trovate, catalogate e salvate su Supabase!", flush=True)
+    else:
+        print("\n❌ Nessuna gara salvata.", flush=True)
+
+
+# =====================================================================
+# ⛷️ FASE 2: ESTRAZIONE ATLETI E TEMPI
+# =====================================================================
+def spider_atleti_master():
+    print("\n--- 📂 FASE 2: RECUPERO GARE DAL DATABASE E DOWNLOAD ATLETI ---", flush=True)
+    
+    gare_db = supabase.table("Gare").select("id_gara_fisi, data_gara, gara_nome, luogo, comitato").execute()
+    lista_gare = gare_db.data
+
+    print(f"--- ⏱️ INIZIO ESTRAZIONE SU {len(lista_gare)} GARE FONDO UNICHE ---", flush=True)
+
+    for gara in lista_gare:
+        id_comp = gara.get('id_gara_fisi')
+        data_g = gara.get('data_gara')
+        nome_g = gara.get('gara_nome')
+        luogo_g = gara.get('luogo')
+        nome_comitato_gara = gara.get('comitato') 
         
-        time.sleep(0.5)
+        if not id_comp or not nome_comitato_gara: continue
+        
+        controllo_db = supabase.table("Risultati").select("id_comp_collegata").eq("id_comp_collegata", id_comp).limit(1).execute()
+        if len(controllo_db.data) > 0:
+            print(f"   ⏩ Già scaricata, salto: {nome_g}", flush=True)
+            continue
+
+        slug_sito = COMITATI_SLUG.get(nome_comitato_gara, "trentino") 
+        stagione_fisi = calcola_stagione_fisi(data_g)
+        print(f"\n🟢 Scarico: {nome_g} ({luogo_g} - {data_g} | {nome_comitato_gara})", flush=True)
+        
+        url_comp = f"https://comitati.fisi.org/{slug_sito}/competizione/?idComp={id_comp}&d={stagione_fisi}"
+        
+        try:
+            res = session.get(url_comp, timeout=20)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            links = soup.find_all('a', href=True)
+            id_sottogare = list(set([l['href'].split('idGara=')[1].split('&')[0] for l in links if 'idGara=' in l['href']]))
+            
+            if not id_sottogare:
+                print("   ⏩ Classifica non ancora pubblicata.", flush=True)
+                continue
+
+            for id_g in id_sottogare:
+                url_gara = f"https://comitati.fisi.org/{slug_sito}/gara/?idGara={id_g}&idComp={id_comp}&d={stagione_fisi}"
+                r_data = session.get(url_gara, timeout=20)
+                gara_soup = BeautifulSoup(r_data.text, 'html.parser')
+                
+                testi_completi = list(gara_soup.stripped_strings)
+                cat, spec = "", ""
+                for i, t in enumerate(testi_completi):
+                    testo_upper = t.upper()
+                    if "CATEGORIA" == testo_upper and i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "POS.":
+                        cat = testi_completi[i+1]
+                    if "SPECIALITÀ" in testo_upper or "SPECIALITA" in testo_upper:
+                        if i + 1 < len(testi_completi) and testi_completi[i+1].upper() != "CATEGORIA":
+                            spec = testi_completi[i+1]
+                            
+                categoria_finale = f"{spec} - {cat}".strip(" -") if spec or cat else "Generale"
+
+                elementi_atleti = gara_soup.find_all('span', class_='x-text-content-text-primary')
+                testi_atleti = [e.get_text(strip=True) for e in elementi_atleti if len(e.get_text(strip=True)) > 0]
+                
+                batch_atleti = []
+                i = 0
+                while i < len(testi_atleti) - 7:
+                    if testi_atleti[i].isdigit() and testi_atleti[i+1].isdigit() and len(testi_atleti[i+1]) >= 3:
+                        batch_atleti.append({
+                            "id_gara_fisi": id_g, 
+                            "id_comp_collegata": id_comp, 
+                            "posizione": int(testi_atleti[i]),
+                            "atleta_nome": testi_atleti[i+2],
+                            "societa": testi_atleti[i+4],
+                            "tempo": testi_atleti[i+5], 
+                            "categoria": categoria_finale,
+                            "gara_nome": nome_g,
+                            "luogo": luogo_g,
+                            "data_gara": data_g,
+                            "comitato": nome_comitato_gara 
+                        })
+                        i += 8
+                    else:
+                        i += 1
+                
+                if batch_atleti:
+                    supabase.table("Risultati").upsert(batch_atleti).execute()
+                    print(f"   ✅ Salvati {len(batch_atleti)} atleti/tempi!", flush=True)
+                
+                time.sleep(0.3)
+
+        except Exception as e:
+            print(f"   ❌ Errore sull'evento {id_comp}: {e}", flush=True)
 
 if __name__ == "__main__":
-    spider_calendari_html()
-    # La Fase 2 scaricherà atleti, date esatte e luoghi esatti entrando in ogni singolo link trovato qui sopra.
-    print("\n🏁 FASE 1 COMPLETATA! Controlla se le attribuzioni dei comitati ora sono perfette! 🏁", flush=True)
+    spider_calendari_nazionale()
+    # spider_atleti_master()  # <-- SBLOCCAMI DOPO IL TEST!
+    print("\n🏁 FASE 1 COMPLETATA! Ora il database è matematicamente perfetto. 🏁", flush=True)
