@@ -142,4 +142,113 @@ def estrai_comitato_master(item, fallback_nome):
     nome_gara = str(item.get("nome", "")).upper()
     if "VALDOSTAN" in nome_gara or "VAL D'AOSTA" in nome_gara or "ASIVA" in nome_gara: return "Valdostano (ASIVA)", 4
     if "CAMPAN" in nome_gara or "MOLIS" in nome_gara: return "Campano (CAM)", 4
-    if "SICIL" in nome_gara or "SICUL
+    if "SICIL" in nome_gara or "SICUL" in nome_gara: return "Siculo (SIC)", 4
+
+    return fallback_nome, 5
+
+# =====================================================================
+# 🗓️ FASE 1: L'ALGORITMO MASTER DEFINITIVO
+# =====================================================================
+def spider_calendari_nazionale():
+    print("--- 🚀 FASE 1: L'ALGORITMO MASTER IN ESECUZIONE ---", flush=True)
+    
+    anno_corrente = datetime.datetime.now().year
+    anno_massimo = anno_corrente + 1 if datetime.datetime.now().month >= 6 else anno_corrente
+    stagioni_da_scaricare = list(range(2010, anno_massimo + 1))
+    
+    gare_salvate = {} 
+    statistiche = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0} 
+    contatore_scansione = 0
+    
+    for slug_sito, portale_fallback in COMITATI_FISI.items():
+        print(f"\n🌍 Interrogo il portale: {portale_fallback}...", flush=True)
+        
+        for anno in stagioni_da_scaricare:
+            offset = 0
+            limit = 500
+            
+            while True:
+                params = {
+                    "action": "competizioni_get_all", "idStagione": str(anno),
+                    "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", 
+                    "limit": limit, "offset": offset
+                }
+                
+                try:
+                    r = session.get(BASE_URL_AJAX, params=params, timeout=15)
+                    data = r.json()
+                    
+                    if not data or not isinstance(data, list) or len(data) == 0: break 
+                        
+                    for item in data:
+                        contatore_scansione += 1
+                        id_comp = str(item.get("idCompetizione"))
+                        disciplina = str(item.get("disciplina", "")).upper()
+                        nome_gara = str(item.get("nome", "")).upper()
+                        
+                        is_fondo = any(k in disciplina for k in FONDO_KEYWORDS) or \
+                                   any(k in nome_gara for k in FONDO_KEYWORDS)
+                        is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
+                        
+                        if is_fondo and not is_proibita:
+                            comitato_vero, score_affidabilita = estrai_comitato_master(item, portale_fallback)
+                            
+                            if id_comp in gare_salvate:
+                                if score_affidabilita < gare_salvate[id_comp]["score"]:
+                                    gare_salvate[id_comp]["comitato"] = comitato_vero
+                                    gare_salvate[id_comp]["score"] = score_affidabilita
+                            else:
+                                gare_salvate[id_comp] = {
+                                    "id_gara_fisi": id_comp, 
+                                    "gara_nome": item.get("nome", "Gara Senza Nome"),
+                                    "luogo": item.get("comune", "N/D"), 
+                                    "data_gara": item.get("dataInizio", "N/D"), 
+                                    "comitato": comitato_vero,
+                                    "disciplina": item.get("disciplina", "N/D"), 
+                                    "codice_societa": item.get("codiceSocieta", ""), 
+                                    "codice_comitato": item.get("codiceComitato", ""), 
+                                    "score": score_affidabilita
+                                }
+                                
+                                if len(gare_salvate) % 500 == 0:
+                                    print(f"   📈 Gare di fondo raccolte finora: {len(gare_salvate)}")
+                                
+                    if len(data) < limit: break
+                    offset += limit
+                    
+                except Exception as e:
+                    print(f"   ⚠️ Errore API su {slug_sito} ({anno}) a offset {offset}: {e}")
+                    break 
+            time.sleep(0.1)
+
+    print(f"\n✅ Scansione completata. Analizzate in totale {contatore_scansione} righe dal database FISI.")
+
+    lista_finale_supabase = []
+    for id_gara, record in gare_salvate.items():
+        statistiche[record["score"]] += 1
+        lista_finale_supabase.append({
+            "id_gara_fisi": record["id_gara_fisi"], "gara_nome": record["gara_nome"],
+            "luogo": record["luogo"], "data_gara": record["data_gara"], "comitato": record["comitato"],
+            "disciplina": record["disciplina"], "codice_societa": record["codice_societa"], 
+            "codice_comitato": record["codice_comitato"]
+        })
+
+    if lista_finale_supabase:
+        for i in range(0, len(lista_finale_supabase), 1000):
+            pacchetto = lista_finale_supabase[i:i+1000]
+            supabase.table("Gare").upsert(pacchetto).execute()
+            
+        print(f"\n🏆 DATABASE PERFETTO E BLINDATO DAL 2010!")
+        print(f"🏁 {len(lista_finale_supabase)} gare salvate in totale.")
+        print(f"\n📊 REPORT AFFIDABILITÀ ASSEGNAZIONI:")
+        print(f"   Rank 0 (Internazionali):           {statistiche[0]}")
+        print(f"   Rank 1 (Metadato FISI Ufficiale):  {statistiche[1]}")
+        print(f"   Rank 2 (Targa Società/Provincia):  {statistiche[2]}")
+        print(f"   Rank 3 (GPS / Mappa Luoghi):       {statistiche[3]}")
+        print(f"   Rank 4 (Nome Gara):                {statistiche[4]}")
+        print(f"   Rank 5 (Fallback Sicurezza):       {statistiche[5]}")
+    else:
+        print("\n❌ Nessuna gara salvata.", flush=True)
+
+if __name__ == "__main__":
+    spider_calendari_nazionale()
