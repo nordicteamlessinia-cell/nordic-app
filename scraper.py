@@ -20,7 +20,7 @@ session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🥇 LA FILA INDIANA: I portali più sani prima, i buggati (ASIVA e LIGURE) in fondo!
+# 🥇 LA FILA INDIANA (Portali più affidabili prima)
 COMITATI_FISI = {
     'trentino': 'Trentino (TN)', 'alto-adige': 'Alto Adige (AA)', 'veneto': 'Veneto (VE)',
     'alpi-centrali': 'Alpi Centrali (AC)', 'alpi-occidentali': 'Alpi Occidentali (AOC)',
@@ -29,10 +29,10 @@ COMITATI_FISI = {
     'lazio-sardegna': 'Lazio e Sardegna (CLS)', 'umbro-marchigiano': 'Umbro Marchigiano (CUM)',
     'campano': 'Campano (CAM)', 'calabro-lucano': 'Calabro Lucano (CAL)',
     'pugliese': 'Pugliese (PUG)', 'siculo': 'Siculo (SIC)',
-    'ligure': 'Ligure (LIG)', 'asiva': 'Valdostano (ASIVA)' # <-- I "Ladroni" in punizione
+    'ligure': 'Ligure (LIG)', 'asiva': 'Valdostano (ASIVA)'
 }
 
-# 🎯 DECODER COMITATI (Nomi o Sigle)
+# 🎯 DECODER COMITATI E PROVINCE
 MAPPA_NOMI_COMITATI = {
     'TRENTINO': 'Trentino (TN)', 'TN': 'Trentino (TN)',
     'ALTO ADIGE': 'Alto Adige (AA)', 'AA': 'Alto Adige (AA)', 'SUDTIROL': 'Alto Adige (AA)',
@@ -53,7 +53,6 @@ MAPPA_NOMI_COMITATI = {
     'SICULO': 'Siculo (SIC)', 'SIC': 'Siculo (SIC)'
 }
 
-# 🗺️ DECODER GEOGRAFICO (Le 107 Province Italiane)
 MAPPA_PROVINCE = {
     'TN': 'Trentino (TN)', 'BZ': 'Alto Adige (AA)', 'AO': 'Valdostano (ASIVA)',
     'AL': 'Alpi Occidentali (AOC)', 'AT': 'Alpi Occidentali (AOC)', 'BI': 'Alpi Occidentali (AOC)',
@@ -91,26 +90,27 @@ MAPPA_PROVINCE = {
     'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)', 'TP': 'Siculo (SIC)', 'GM': 'Gruppi Militari (GM)'
 }
 
+# 🛠️ KEYWORDS PER FILTRAGGIO ROBUSTO
+FONDO_KEYWORDS = ["FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDIC", "NORDICO", "XC"]
+LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
+
 def estrai_comitato_master(item, fallback_nome):
     """Il Ranking Definitivo (0 = Perfetto, 3 = Fallback di emergenza)"""
     livello = str(item.get("livello", "")).upper()
     if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
         return "Internazionale/FIS", 0
 
-    # Rank 1: Dichiarazione esplicita FISI
     c_code = str(item.get("codiceComitato", "")).strip().upper()
     c_name = str(item.get("comitato", "")).strip().upper()
     if c_code in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_code], 1
     if c_name in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_name], 1
 
-    # Rank 2: Targa Provinciale (Infallibile geograficamente)
     soc = str(item.get("codiceSocieta", "")).strip().upper()
     if len(soc) >= 2:
         provincia = soc[:2]
         if provincia in MAPPA_PROVINCE:
             return MAPPA_PROVINCE[provincia], 2
 
-    # Rank 3: I metadati sono vuoti, ci fidiamo del portale (ma l'ordine della Fila Indiana ci protegge)
     return fallback_nome, 3
 
 # =====================================================================
@@ -122,19 +122,20 @@ def spider_calendari_nazionale():
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
     anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
-    stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
     
-    LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
+    # ⏱️ Scaviamo nel passato!
+    stagioni_da_scaricare = list(range(2010, anno_massimo + 1))
     
     gare_salvate = {} 
     statistiche = {0:0, 1:0, 2:0, 3:0} 
+    contatore_scansione = 0
     
     for slug_sito, portale_fallback in COMITATI_FISI.items():
         print(f"\n🌍 Interrogo il portale: {portale_fallback}...", flush=True)
         
         for anno in stagioni_da_scaricare:
             offset = 0
-            limit = 200
+            limit = 500
             
             while True:
                 params = {
@@ -150,19 +151,19 @@ def spider_calendari_nazionale():
                     if not data or not isinstance(data, list) or len(data) == 0: break 
                         
                     for item in data:
+                        contatore_scansione += 1
                         id_comp = str(item.get("idCompetizione"))
                         disciplina = str(item.get("disciplina", "")).upper()
                         nome_gara = str(item.get("nome", "")).upper()
                         
-                        is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
-                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
+                        is_fondo = any(k in disciplina for k in FONDO_KEYWORDS) or \
+                                   any(k in nome_gara for k in FONDO_KEYWORDS)
                         is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
                         
                         if is_fondo and not is_proibita:
                             comitato_vero, score_affidabilita = estrai_comitato_master(item, portale_fallback)
                             
                             if id_comp in gare_salvate:
-                                # Sovrascrive SOLO se il nuovo dato è più affidabile (score MINORE)
                                 if score_affidabilita < gare_salvate[id_comp]["score"]:
                                     gare_salvate[id_comp]["comitato"] = comitato_vero
                                     gare_salvate[id_comp]["score"] = score_affidabilita
@@ -173,36 +174,51 @@ def spider_calendari_nazionale():
                                     "luogo": item.get("comune", "N/D"), 
                                     "data_gara": item.get("dataInizio", "N/D"), 
                                     "comitato": comitato_vero,
+                                    "disciplina": item.get("disciplina", "N/D"), # Nuovo!
+                                    "codice_societa": item.get("codiceSocieta", ""), # Nuovo!
+                                    "codice_comitato": item.get("codiceComitato", ""), # Nuovo!
                                     "score": score_affidabilita
                                 }
+                                
+                                # 📊 LOG DI PROGRESSO UTILE
+                                if len(gare_salvate) % 500 == 0:
+                                    print(f"   📈 Gare di fondo raccolte finora: {len(gare_salvate)}")
                                 
                     if len(data) < limit: break
                     offset += limit
                     
-                except Exception: break 
+                except Exception as e:
+                    # 🚨 LOG DEGLI ERRORI SILENZIOSI
+                    print(f"   ⚠️ Errore API su {slug_sito} ({anno}) a offset {offset}: {e}")
+                    break 
             time.sleep(0.1)
 
-    # Elaborazione Output
+    print(f"\n✅ Scansione completata. Analizzate in totale {contatore_scansione} righe dal database FISI.")
+
     lista_finale_supabase = []
     for id_gara, record in gare_salvate.items():
         statistiche[record["score"]] += 1
         lista_finale_supabase.append({
             "id_gara_fisi": record["id_gara_fisi"], "gara_nome": record["gara_nome"],
-            "luogo": record["luogo"], "data_gara": record["data_gara"], "comitato": record["comitato"]
+            "luogo": record["luogo"], "data_gara": record["data_gara"], "comitato": record["comitato"],
+            "disciplina": record["disciplina"], "codice_societa": record["codice_societa"], 
+            "codice_comitato": record["codice_comitato"]
         })
 
     if lista_finale_supabase:
         for i in range(0, len(lista_finale_supabase), 1000):
             pacchetto = lista_finale_supabase[i:i+1000]
             supabase.table("Gare").upsert(pacchetto).execute()
-        print(f"\n✅ DATABASE PERFETTO: {len(lista_finale_supabase)} gare salvate in totale!")
-        print(f"📊 REPORT AFFIDABILITÀ ASSEGNAZIONI:")
+            
+        print(f"\n🏆 DATABASE PERFETTO E AGGIORNATO DAL 2010!")
+        print(f"🏁 {len(lista_finale_supabase)} gare salvate in totale.")
+        print(f"\n📊 REPORT AFFIDABILITÀ ASSEGNAZIONI:")
         print(f"   Rank 0 (Internazionali):           {statistiche[0]}")
         print(f"   Rank 1 (Metadato FISI Ufficiale):  {statistiche[1]}")
         print(f"   Rank 2 (Geografia/Targa Provincia):{statistiche[2]}")
         print(f"   Rank 3 (Fallback Sicurezza):       {statistiche[3]}")
     else:
-        print("\n❌ Nessuna gara salvata.", flush=True)
+        print("\n❌ Nessuna gara salvata. (Controlla il filtro disciplina se vedi 0 qui).", flush=True)
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
