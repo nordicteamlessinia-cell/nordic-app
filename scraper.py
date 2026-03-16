@@ -19,7 +19,7 @@ session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
 
-BASE_URL_AJAX = "https://comitati.import os
+BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
