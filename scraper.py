@@ -4,6 +4,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import time
 import datetime
+import re # <-- AGGIUNTO PER IL MATCH DEI PREFISSI
 from supabase import create_client
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
@@ -16,7 +17,7 @@ session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'})
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
@@ -39,7 +40,7 @@ MAPPA_NOMI_COMITATI = {
     'VENETO': 'Veneto (VE)', 'VE': 'Veneto (VE)',
     'ALPI CENTRALI': 'Alpi Centrali (AC)', 'AC': 'Alpi Centrali (AC)',
     'ALPI OCCIDENTALI': 'Alpi Occidentali (AOC)', 'AOC': 'Alpi Occidentali (AOC)',
-    'VALDOSTANO': 'Valdostano (ASIVA)', 'ASIVA': 'Valdostano (ASIVA)', 'VA': 'Valdostano (ASIVA)', 'VDA': 'Valdostano (ASIVA)',
+    'VALDOSTANO': 'Valdostano (ASIVA)', 'ASIVA': 'Valdostano (ASIVA)', 'VDA': 'Valdostano (ASIVA)',
     'FRIULI VENEZIA GIULIA': 'Friuli Venezia Giulia (FVG)', 'FVG': 'Friuli Venezia Giulia (FVG)',
     'APPENNINO EMILIANO': 'Appennino Emiliano (CAE)', 'CAE': 'Appennino Emiliano (CAE)',
     'APPENNINO TOSCANO': 'Appennino Toscano (CAT)', 'CAT': 'Appennino Toscano (CAT)',
@@ -88,7 +89,7 @@ MAPPA_PROVINCE = {
     'BA': 'Pugliese (PUG)', 'BT': 'Pugliese (PUG)', 'BR': 'Pugliese (PUG)', 'FG': 'Pugliese (PUG)',
     'LE': 'Pugliese (PUG)', 'TA': 'Pugliese (PUG)', 'AG': 'Siculo (SIC)', 'CL': 'Siculo (SIC)', 
     'CT': 'Siculo (SIC)', 'EN': 'Siculo (SIC)', 'ME': 'Siculo (SIC)', 'PA': 'Siculo (SIC)', 
-    'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)', 'TP': 'Siculo (SIC)'
+    'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)', 'TP': 'Siculo (SIC)', 'GM': 'Gruppi Militari (GM)'
 }
 
 # 📍 IL GPS INTERNO (Per le gare che mentono o sono vuote)
@@ -114,7 +115,7 @@ FONDO_KEYWORDS = ["FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDIC"
 LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
 
 def estrai_comitato_master(item, fallback_nome):
-    """Il Crivello a 5 Maglie"""
+    """Il Crivello a 5 Maglie - Versione con RegEx"""
     livello = str(item.get("livello", "")).upper()
     if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
         return "Internazionale/FIS", 0
@@ -125,12 +126,21 @@ def estrai_comitato_master(item, fallback_nome):
     if c_code in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_code], 1
     if c_name in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_name], 1
 
-    # Rank 2: Targa Provinciale 
+    # Rank 2: Società Valdostane ed Estrazione Alfabetica
     soc = str(item.get("codiceSocieta", "")).strip().upper()
-    if len(soc) >= 2:
-        provincia = soc[:2]
-        if provincia in MAPPA_PROVINCE:
-            return MAPPA_PROVINCE[provincia], 2
+    
+    # ESTRAZIONE DINAMICA TRAMITE REGEX
+    pref = re.match(r"^[A-Z]+", soc)
+    if pref:
+        sigla_soc = pref.group(0)
+        
+        # ECCEZIONE VALDOSTANA ASSOLUTA (Rank 2.1)
+        if sigla_soc in ["AO", "VA", "VDA", "ASIVA"]:
+            return "Valdostano (ASIVA)", 2
+            
+        # RANK 2.2: Targa Provinciale Generale
+        if sigla_soc in MAPPA_PROVINCE:
+            return MAPPA_PROVINCE[sigla_soc], 2
 
     # Rank 3: Il GPS
     luogo = str(item.get("comune", "")).upper()
@@ -144,7 +154,7 @@ def estrai_comitato_master(item, fallback_nome):
     if "CAMPAN" in nome_gara or "MOLIS" in nome_gara: return "Campano (CAM)", 4
     if "SICIL" in nome_gara or "SICUL" in nome_gara: return "Siculo (SIC)", 4
 
-    # Rank 5: Fallback al portale interrogato (Indispensabile!)
+    # Rank 5: Fallback al portale interrogato
     return fallback_nome, 5
 
 # =====================================================================
@@ -161,7 +171,7 @@ def spider_calendari_nazionale():
     statistiche = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0} 
     contatore_scansione = 0
     
-    # 🌍 TORNIAMO A SPAZZOLARE TUTTI I 17 SERVER PER AVERE LE 40K+ RIGHE
+    # 🌍 SPAZZOLIAMO TUTTI I SERVER
     for slug_sito, portale_fallback in COMITATI_FISI.items():
         print(f"\n🌍 Interrogo il portale: {portale_fallback}...", flush=True)
         
