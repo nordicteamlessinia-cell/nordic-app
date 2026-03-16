@@ -20,106 +20,104 @@ session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# Interroghiamo solo i server principali per pescare tutte le gare grezze d'Italia
-COMITATI_SPAZZOLINI = ['trentino', 'veneto', 'asiva', 'alpi-centrali', 'siculo'] 
-
-# 🎯 DECODER UFFICIALE DEI COMITATI
-MAPPA_COMITATI = {
-    'AA': 'Alto Adige (AA)', 'AC': 'Alpi Centrali (AC)', 'AOC': 'Alpi Occidentali (AOC)',
-    'ASIVA': 'Valdostano (ASIVA)', 'CAB': 'Abruzzo (CAB)', 'CAE': 'Appennino Emiliano (CAE)', 
-    'CAL': 'Calabro Lucano (CAL)', 'CAM': 'Campano (CAM)', 'CAT': 'Appennino Toscano (CAT)', 
-    'CLS': 'Lazio e Sardegna (CLS)', 'CUM': 'Umbro Marchigiano (CUM)', 'FVG': 'Friuli Venezia Giulia (FVG)', 
-    'LIG': 'Ligure (LIG)', 'PUG': 'Pugliese (PUG)', 'SIC': 'Siculo (SIC)', 'TN': 'Trentino (TN)', 
-    'VE': 'Veneto (VE)', 'GM': 'Gruppi Militari (GM)'
+# 🥇 LA FILA INDIANA: I portali più sani prima, i buggati (ASIVA e LIGURE) in fondo!
+COMITATI_FISI = {
+    'trentino': 'Trentino (TN)', 'alto-adige': 'Alto Adige (AA)', 'veneto': 'Veneto (VE)',
+    'alpi-centrali': 'Alpi Centrali (AC)', 'alpi-occidentali': 'Alpi Occidentali (AOC)',
+    'friuli-venezia-giulia': 'Friuli Venezia Giulia (FVG)', 'appennino-emiliano': 'Appennino Emiliano (CAE)',
+    'appennino-toscano': 'Appennino Toscano (CAT)', 'abruzzo': 'Abruzzo (CAB)',
+    'lazio-sardegna': 'Lazio e Sardegna (CLS)', 'umbro-marchigiano': 'Umbro Marchigiano (CUM)',
+    'campano': 'Campano (CAM)', 'calabro-lucano': 'Calabro Lucano (CAL)',
+    'pugliese': 'Pugliese (PUG)', 'siculo': 'Siculo (SIC)',
+    'ligure': 'Ligure (LIG)', 'asiva': 'Valdostano (ASIVA)' # <-- I "Ladroni" in punizione
 }
 
-# 🗺️ LA CHIAVE DI VOLTA: MAPPA DELLE 107 PROVINCE ITALIANE
+# 🎯 DECODER COMITATI (Nomi o Sigle)
+MAPPA_NOMI_COMITATI = {
+    'TRENTINO': 'Trentino (TN)', 'TN': 'Trentino (TN)',
+    'ALTO ADIGE': 'Alto Adige (AA)', 'AA': 'Alto Adige (AA)', 'SUDTIROL': 'Alto Adige (AA)',
+    'VENETO': 'Veneto (VE)', 'VE': 'Veneto (VE)',
+    'ALPI CENTRALI': 'Alpi Centrali (AC)', 'AC': 'Alpi Centrali (AC)',
+    'ALPI OCCIDENTALI': 'Alpi Occidentali (AOC)', 'AOC': 'Alpi Occidentali (AOC)',
+    'VALDOSTANO': 'Valdostano (ASIVA)', 'ASIVA': 'Valdostano (ASIVA)', 'VA': 'Valdostano (ASIVA)',
+    'FRIULI VENEZIA GIULIA': 'Friuli Venezia Giulia (FVG)', 'FVG': 'Friuli Venezia Giulia (FVG)',
+    'APPENNINO EMILIANO': 'Appennino Emiliano (CAE)', 'CAE': 'Appennino Emiliano (CAE)',
+    'APPENNINO TOSCANO': 'Appennino Toscano (CAT)', 'CAT': 'Appennino Toscano (CAT)',
+    'ABRUZZO': 'Abruzzo (CAB)', 'CAB': 'Abruzzo (CAB)',
+    'LAZIO E SARDEGNA': 'Lazio e Sardegna (CLS)', 'CLS': 'Lazio e Sardegna (CLS)',
+    'LIGURE': 'Ligure (LIG)', 'LIG': 'Ligure (LIG)', 'LI': 'Ligure (LIG)',
+    'UMBRO MARCHIGIANO': 'Umbro Marchigiano (CUM)', 'CUM': 'Umbro Marchigiano (CUM)',
+    'CAMPANO': 'Campano (CAM)', 'CAM': 'Campano (CAM)',
+    'CALABRO LUCANO': 'Calabro Lucano (CAL)', 'CAL': 'Calabro Lucano (CAL)',
+    'PUGLIESE': 'Pugliese (PUG)', 'PUG': 'Pugliese (PUG)',
+    'SICULO': 'Siculo (SIC)', 'SIC': 'Siculo (SIC)'
+}
+
+# 🗺️ DECODER GEOGRAFICO (Le 107 Province Italiane)
 MAPPA_PROVINCE = {
-    # TRENTINO ALTO ADIGE
-    'TN': 'Trentino (TN)', 'BZ': 'Alto Adige (AA)', 
-    # VALLE D'AOSTA
-    'AO': 'Valdostano (ASIVA)',
-    # PIEMONTE (AOC)
+    'TN': 'Trentino (TN)', 'BZ': 'Alto Adige (AA)', 'AO': 'Valdostano (ASIVA)',
     'AL': 'Alpi Occidentali (AOC)', 'AT': 'Alpi Occidentali (AOC)', 'BI': 'Alpi Occidentali (AOC)',
     'CN': 'Alpi Occidentali (AOC)', 'NO': 'Alpi Occidentali (AOC)', 'TO': 'Alpi Occidentali (AOC)',
-    'VB': 'Alpi Occidentali (AOC)', 'VC': 'Alpi Occidentali (AOC)',
-    # LOMBARDIA (AC)
-    'BG': 'Alpi Centrali (AC)', 'BS': 'Alpi Centrali (AC)', 'CO': 'Alpi Centrali (AC)',
-    'CR': 'Alpi Centrali (AC)', 'LC': 'Alpi Centrali (AC)', 'LO': 'Alpi Centrali (AC)',
-    'MN': 'Alpi Centrali (AC)', 'MI': 'Alpi Centrali (AC)', 'MB': 'Alpi Centrali (AC)',
-    'PV': 'Alpi Centrali (AC)', 'SO': 'Alpi Centrali (AC)', 'VA': 'Alpi Centrali (AC)', # Varese!
-    # VENETO (VE)
-    'BL': 'Veneto (VE)', 'PD': 'Veneto (VE)', 'RO': 'Veneto (VE)', 'TV': 'Veneto (VE)',
-    'VE': 'Veneto (VE)', 'VR': 'Veneto (VE)', 'VI': 'Veneto (VE)',
-    # FRIULI (FVG)
-    'GO': 'Friuli Venezia Giulia (FVG)', 'PN': 'Friuli Venezia Giulia (FVG)',
-    'TS': 'Friuli Venezia Giulia (FVG)', 'UD': 'Friuli Venezia Giulia (FVG)',
-    # LIGURIA (LIG)
-    'GE': 'Ligure (LIG)', 'IM': 'Ligure (LIG)', 'SP': 'Ligure (LIG)', 'SV': 'Ligure (LIG)',
-    # EMILIA ROMAGNA (CAE)
-    'BO': 'Appennino Emiliano (CAE)', 'FE': 'Appennino Emiliano (CAE)', 'FC': 'Appennino Emiliano (CAE)',
-    'MO': 'Appennino Emiliano (CAE)', 'PR': 'Appennino Emiliano (CAE)', 'PC': 'Appennino Emiliano (CAE)',
-    'RA': 'Appennino Emiliano (CAE)', 'RE': 'Appennino Emiliano (CAE)', 'RN': 'Appennino Emiliano (CAE)',
-    # TOSCANA (CAT)
-    'AR': 'Appennino Toscano (CAT)', 'FI': 'Appennino Toscano (CAT)', 'GR': 'Appennino Toscano (CAT)',
-    'LI': 'Appennino Toscano (CAT)', # Livorno!
-    'LU': 'Appennino Toscano (CAT)', 'MS': 'Appennino Toscano (CAT)', 'PI': 'Appennino Toscano (CAT)',
+    'VB': 'Alpi Occidentali (AOC)', 'VC': 'Alpi Occidentali (AOC)', 'BG': 'Alpi Centrali (AC)', 
+    'BS': 'Alpi Centrali (AC)', 'CO': 'Alpi Centrali (AC)', 'CR': 'Alpi Centrali (AC)', 
+    'LC': 'Alpi Centrali (AC)', 'LO': 'Alpi Centrali (AC)', 'MN': 'Alpi Centrali (AC)', 
+    'MI': 'Alpi Centrali (AC)', 'MB': 'Alpi Centrali (AC)', 'PV': 'Alpi Centrali (AC)', 
+    'SO': 'Alpi Centrali (AC)', 'VA': 'Alpi Centrali (AC)', 'BL': 'Veneto (VE)', 
+    'PD': 'Veneto (VE)', 'RO': 'Veneto (VE)', 'TV': 'Veneto (VE)', 'VE': 'Veneto (VE)', 
+    'VR': 'Veneto (VE)', 'VI': 'Veneto (VE)', 'GO': 'Friuli Venezia Giulia (FVG)', 
+    'PN': 'Friuli Venezia Giulia (FVG)', 'TS': 'Friuli Venezia Giulia (FVG)', 
+    'UD': 'Friuli Venezia Giulia (FVG)', 'GE': 'Ligure (LIG)', 'IM': 'Ligure (LIG)', 
+    'SP': 'Ligure (LIG)', 'SV': 'Ligure (LIG)', 'BO': 'Appennino Emiliano (CAE)', 
+    'FE': 'Appennino Emiliano (CAE)', 'FC': 'Appennino Emiliano (CAE)', 'MO': 'Appennino Emiliano (CAE)', 
+    'PR': 'Appennino Emiliano (CAE)', 'PC': 'Appennino Emiliano (CAE)', 'RA': 'Appennino Emiliano (CAE)', 
+    'RE': 'Appennino Emiliano (CAE)', 'RN': 'Appennino Emiliano (CAE)', 'AR': 'Appennino Toscano (CAT)', 
+    'FI': 'Appennino Toscano (CAT)', 'GR': 'Appennino Toscano (CAT)', 'LI': 'Appennino Toscano (CAT)', 
+    'LU': 'Appennino Toscano (CAT)', 'MS': 'Appennino Toscano (CAT)', 'PI': 'Appennino Toscano (CAT)', 
     'PT': 'Appennino Toscano (CAT)', 'PO': 'Appennino Toscano (CAT)', 'SI': 'Appennino Toscano (CAT)',
-    # UMBRIA E MARCHE (CUM)
     'PG': 'Umbro Marchigiano (CUM)', 'TR': 'Umbro Marchigiano (CUM)', 'AN': 'Umbro Marchigiano (CUM)',
     'AP': 'Umbro Marchigiano (CUM)', 'FM': 'Umbro Marchigiano (CUM)', 'MC': 'Umbro Marchigiano (CUM)',
-    'PU': 'Umbro Marchigiano (CUM)',
-    # LAZIO E SARDEGNA (CLS)
-    'FR': 'Lazio e Sardegna (CLS)', 'LT': 'Lazio e Sardegna (CLS)', 'RI': 'Lazio e Sardegna (CLS)',
-    'RM': 'Lazio e Sardegna (CLS)', 'VT': 'Lazio e Sardegna (CLS)', 'CA': 'Lazio e Sardegna (CLS)',
-    'NU': 'Lazio e Sardegna (CLS)', 'OR': 'Lazio e Sardegna (CLS)', 'SS': 'Lazio e Sardegna (CLS)',
-    'SU': 'Lazio e Sardegna (CLS)',
-    # ABRUZZO (CAB)
-    'CH': 'Abruzzo (CAB)', 'AQ': 'Abruzzo (CAB)', 'PE': 'Abruzzo (CAB)', 'TE': 'Abruzzo (CAB)',
-    # CAMPANIA E MOLISE (CAM)
-    'AV': 'Campano (CAM)', 'BN': 'Campano (CAM)', 'CE': 'Campano (CAM)', 'NA': 'Campano (CAM)',
-    'SA': 'Campano (CAM)', 'CB': 'Campano (CAM)', 'IS': 'Campano (CAM)', # CB = Campobasso (Capracotta)
-    # CALABRIA E BASILICATA (CAL)
-    'CZ': 'Calabro Lucano (CAL)', 'CS': 'Calabro Lucano (CAL)', 'KR': 'Calabro Lucano (CAL)',
-    'RC': 'Calabro Lucano (CAL)', 'VV': 'Calabro Lucano (CAL)', 'MT': 'Calabro Lucano (CAL)',
-    'PZ': 'Calabro Lucano (CAL)',
-    # PUGLIA (PUG)
+    'PU': 'Umbro Marchigiano (CUM)', 'FR': 'Lazio e Sardegna (CLS)', 'LT': 'Lazio e Sardegna (CLS)', 
+    'RI': 'Lazio e Sardegna (CLS)', 'RM': 'Lazio e Sardegna (CLS)', 'VT': 'Lazio e Sardegna (CLS)', 
+    'CA': 'Lazio e Sardegna (CLS)', 'NU': 'Lazio e Sardegna (CLS)', 'OR': 'Lazio e Sardegna (CLS)', 
+    'SS': 'Lazio e Sardegna (CLS)', 'SU': 'Lazio e Sardegna (CLS)', 'CH': 'Abruzzo (CAB)', 
+    'AQ': 'Abruzzo (CAB)', 'PE': 'Abruzzo (CAB)', 'TE': 'Abruzzo (CAB)', 'AV': 'Campano (CAM)', 
+    'BN': 'Campano (CAM)', 'CE': 'Campano (CAM)', 'NA': 'Campano (CAM)', 'SA': 'Campano (CAM)', 
+    'CB': 'Campano (CAM)', 'IS': 'Campano (CAM)', 'CZ': 'Calabro Lucano (CAL)', 
+    'CS': 'Calabro Lucano (CAL)', 'KR': 'Calabro Lucano (CAL)', 'RC': 'Calabro Lucano (CAL)', 
+    'VV': 'Calabro Lucano (CAL)', 'MT': 'Calabro Lucano (CAL)', 'PZ': 'Calabro Lucano (CAL)',
     'BA': 'Pugliese (PUG)', 'BT': 'Pugliese (PUG)', 'BR': 'Pugliese (PUG)', 'FG': 'Pugliese (PUG)',
-    'LE': 'Pugliese (PUG)', 'TA': 'Pugliese (PUG)',
-    # SICILIA (SIC)
-    'AG': 'Siculo (SIC)', 'CL': 'Siculo (SIC)', 'CT': 'Siculo (SIC)', 'EN': 'Siculo (SIC)',
-    'ME': 'Siculo (SIC)', 'PA': 'Siculo (SIC)', 'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)',
-    'TP': 'Siculo (SIC)',
-    # MILITARI
-    'GM': 'Gruppi Militari (GM)'
+    'LE': 'Pugliese (PUG)', 'TA': 'Pugliese (PUG)', 'AG': 'Siculo (SIC)', 'CL': 'Siculo (SIC)', 
+    'CT': 'Siculo (SIC)', 'EN': 'Siculo (SIC)', 'ME': 'Siculo (SIC)', 'PA': 'Siculo (SIC)', 
+    'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)', 'TP': 'Siculo (SIC)', 'GM': 'Gruppi Militari (GM)'
 }
 
-def estrai_verita_geografica(item):
-    """Basa tutto sulla geografia reale della gara"""
+def estrai_comitato_master(item, fallback_nome):
+    """Il Ranking Definitivo (0 = Perfetto, 3 = Fallback di emergenza)"""
     livello = str(item.get("livello", "")).upper()
     if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
-        return "Internazionale/FIS"
+        return "Internazionale/FIS", 0
 
-    # 1. Controlliamo se la FISI ci ha fatto la grazia di mettere la targa comitato giusta
-    c = str(item.get("codiceComitato", "")).strip().upper()
-    if not c: c = str(item.get("comitato", "")).strip().upper()
-    if c in MAPPA_COMITATI: 
-        return MAPPA_COMITATI[c]
+    # Rank 1: Dichiarazione esplicita FISI
+    c_code = str(item.get("codiceComitato", "")).strip().upper()
+    c_name = str(item.get("comitato", "")).strip().upper()
+    if c_code in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_code], 1
+    if c_name in MAPPA_NOMI_COMITATI: return MAPPA_NOMI_COMITATI[c_name], 1
 
-    # 2. CONTROLLO PROVINCIALE ASSOLUTO SULLA SOCIETÀ (Es: CB03, CT12, AO01)
+    # Rank 2: Targa Provinciale (Infallibile geograficamente)
     soc = str(item.get("codiceSocieta", "")).strip().upper()
     if len(soc) >= 2:
-        provincia = soc[:2] # Prendiamo le prime due lettere
+        provincia = soc[:2]
         if provincia in MAPPA_PROVINCE:
-            return MAPPA_PROVINCE[provincia]
+            return MAPPA_PROVINCE[provincia], 2
 
-    return "Altre / Sconosciuto"
+    # Rank 3: I metadati sono vuoti, ci fidiamo del portale (ma l'ordine della Fila Indiana ci protegge)
+    return fallback_nome, 3
 
 # =====================================================================
-# 🗓️ FASE 1: RACCOLTA E SMISTAMENTO GEOGRAFICO
+# 🗓️ FASE 1: DOWNLOAD GLOBALE CON RANKING E GEOGRAFIA
 # =====================================================================
 def spider_calendari_nazionale():
-    print("--- 🚀 FASE 1: DOWNLOAD GLOBALE E SMISTAMENTO GEOGRAFICO SULLE PROVINCE ---", flush=True)
+    print("--- 🚀 FASE 1: L'ALGORITMO MASTER IN ESECUZIONE ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
@@ -128,54 +126,83 @@ def spider_calendari_nazionale():
     
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
-    gare_uniche_grezze = {}
+    gare_salvate = {} 
+    statistiche = {0:0, 1:0, 2:0, 3:0} 
     
-    # Raccogliamo TUTTE le gare passando per qualche server a caso (tanto sputano tutto)
-    for slug_sito in COMITATI_SPAZZOLINI:
-        print(f"🌍 Interrogo il nodo {slug_sito} per estrarre gare...", flush=True)
+    for slug_sito, portale_fallback in COMITATI_FISI.items():
+        print(f"\n🌍 Interrogo il portale: {portale_fallback}...", flush=True)
+        
         for anno in stagioni_da_scaricare:
             offset = 0
-            limit = 500
+            limit = 200
+            
             while True:
-                params = {"action": "competizioni_get_all", "idStagione": str(anno), "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", "limit": limit, "offset": offset}
+                params = {
+                    "action": "competizioni_get_all", "idStagione": str(anno),
+                    "url": f"https://comitati.fisi.org/{slug_sito}/calendario/", 
+                    "limit": limit, "offset": offset
+                }
+                
                 try:
                     r = session.get(BASE_URL_AJAX, params=params, timeout=15)
                     data = r.json()
+                    
                     if not data or not isinstance(data, list) or len(data) == 0: break 
+                        
                     for item in data:
                         id_comp = str(item.get("idCompetizione"))
                         disciplina = str(item.get("disciplina", "")).upper()
                         nome_gara = str(item.get("nome", "")).upper()
-                        if (any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])) and not (any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)):
-                            gare_uniche_grezze[id_comp] = item
+                        
+                        is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
+                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
+                        is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
+                        
+                        if is_fondo and not is_proibita:
+                            comitato_vero, score_affidabilita = estrai_comitato_master(item, portale_fallback)
+                            
+                            if id_comp in gare_salvate:
+                                # Sovrascrive SOLO se il nuovo dato è più affidabile (score MINORE)
+                                if score_affidabilita < gare_salvate[id_comp]["score"]:
+                                    gare_salvate[id_comp]["comitato"] = comitato_vero
+                                    gare_salvate[id_comp]["score"] = score_affidabilita
+                            else:
+                                gare_salvate[id_comp] = {
+                                    "id_gara_fisi": id_comp, 
+                                    "gara_nome": item.get("nome", "Gara Senza Nome"),
+                                    "luogo": item.get("comune", "N/D"), 
+                                    "data_gara": item.get("dataInizio", "N/D"), 
+                                    "comitato": comitato_vero,
+                                    "score": score_affidabilita
+                                }
+                                
                     if len(data) < limit: break
                     offset += limit
+                    
                 except Exception: break 
             time.sleep(0.1)
 
-    print(f"\n📦 Trovate {len(gare_uniche_grezze)} gare uniche. Avvio smistamento geografico...", flush=True)
-    
+    # Elaborazione Output
     lista_finale_supabase = []
-    
-    for id_gara, item in gare_uniche_grezze.items():
-        comitato_vero = estrai_verita_geografica(item)
-        
+    for id_gara, record in gare_salvate.items():
+        statistiche[record["score"]] += 1
         lista_finale_supabase.append({
-            "id_gara_fisi": id_gara, 
-            "gara_nome": item.get("nome", "Gara Senza Nome"),
-            "luogo": item.get("comune", "N/D"), 
-            "data_gara": item.get("dataInizio", "N/D"), 
-            "comitato": comitato_vero 
+            "id_gara_fisi": record["id_gara_fisi"], "gara_nome": record["gara_nome"],
+            "luogo": record["luogo"], "data_gara": record["data_gara"], "comitato": record["comitato"]
         })
 
     if lista_finale_supabase:
         for i in range(0, len(lista_finale_supabase), 1000):
             pacchetto = lista_finale_supabase[i:i+1000]
             supabase.table("Gare").upsert(pacchetto).execute()
-        print(f"\n✅ CAPOLAVORO: {len(lista_finale_supabase)} gare assegnate definitivamente.")
-        print("Capracotta è in Campania, Catania è in Sicilia e la Valle d'Aosta riposa al sicuro! 🏔️")
+        print(f"\n✅ DATABASE PERFETTO: {len(lista_finale_supabase)} gare salvate in totale!")
+        print(f"📊 REPORT AFFIDABILITÀ ASSEGNAZIONI:")
+        print(f"   Rank 0 (Internazionali):           {statistiche[0]}")
+        print(f"   Rank 1 (Metadato FISI Ufficiale):  {statistiche[1]}")
+        print(f"   Rank 2 (Geografia/Targa Provincia):{statistiche[2]}")
+        print(f"   Rank 3 (Fallback Sicurezza):       {statistiche[3]}")
     else:
-        print("\n❌ Nessuna gara trovata.", flush=True)
+        print("\n❌ Nessuna gara salvata.", flush=True)
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
