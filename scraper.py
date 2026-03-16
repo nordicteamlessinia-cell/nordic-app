@@ -272,7 +272,7 @@ def spider_calendari_nazionale():
         print("\n❌ Nessuna gara salvata.", flush=True)
 
 if __name__ == "__main__":
-    spider_calendari_nazionale()fisi.org/wp-admin/admin-ajax.php"
+    spider_calendari_nazionale()
 
 # 🥇 LA FILA INDIANA
 COMITATI_FISI = {
