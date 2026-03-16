@@ -5,7 +5,6 @@ from urllib3.util.retry import Retry
 import time
 import datetime
 from supabase import create_client
-from collections import defaultdict
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -17,35 +16,54 @@ session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 session.mount('http://', HTTPAdapter(max_retries=retries))
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'})
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-COMITATI_FISI = {
-    'Trentino (TN)': 'trentino',
-    'Alto Adige (AA)': 'alto-adige',           
-    'Veneto (VE)': 'veneto',
-    'Alpi Centrali (AC)': 'alpi-centrali',     
-    'Alpi Occidentali (AOC)': 'alpi-occidentali', 
-    'Valdostano (ASIVA)': 'asiva',
-    'Friuli Venezia Giulia (FVG)': 'friuli-venezia-giulia', 
-    'Appennino Emiliano (CAE)': 'appennino-emiliano', 
-    'Appennino Toscano (CAT)': 'appennino-toscano',   
-    'Abruzzo (CAB)': 'abruzzo',
-    'Lazio e Sardegna (CLS)': 'lazio-sardegna',
-    'Ligure (LIG)': 'ligure',
-    'Umbro Marchigiano (CUM)': 'umbro-marchigiano',
-    'Campano (CAM)': 'campano',
-    'Calabro Lucano (CAL)': 'calabro-lucano',
-    'Pugliese (PUG)': 'pugliese',
-    'Siculo (SIC)': 'siculo',
+# 🥇 CORRIERI PER IL DOWNLOAD
+COMITATI_FISI = [
+    'trentino', 'alto-adige', 'veneto', 'alpi-centrali', 'alpi-occidentali', 
+    'asiva', 'friuli-venezia-giulia', 'appennino-emiliano', 'appennino-toscano',   
+    'abruzzo', 'lazio-sardegna', 'ligure', 'umbro-marchigiano', 'campano',
+    'calabro-lucano', 'pugliese', 'siculo'
+]
+
+# 🎯 IL LETTORE DI CARTE D'IDENTITÀ (Legge il JSON puro)
+MAPPA_SIGLE = {
+    'AA': 'Alto Adige (AA)', 'AC': 'Alpi Centrali (AC)', 'AOC': 'Alpi Occidentali (AOC)',
+    'ASIVA': 'Valdostano (ASIVA)', 'VA': 'Valdostano (ASIVA)',
+    'CAB': 'Abruzzo (CAB)', 'CAE': 'Appennino Emiliano (CAE)', 'CAL': 'Calabro Lucano (CAL)',
+    'CAM': 'Campano (CAM)', 'MOL': 'Campano (CAM)', # Molise unito alla Campania
+    'CAT': 'Appennino Toscano (CAT)', 'CLS': 'Lazio e Sardegna (CLS)',
+    'CUM': 'Umbro Marchigiano (CUM)', 'FVG': 'Friuli Venezia Giulia (FVG)',
+    'LIG': 'Ligure (LIG)', 'PUG': 'Pugliese (PUG)', 'SIC': 'Siculo (SIC)',
+    'TN': 'Trentino (TN)', 'VE': 'Veneto (VE)', 'GM': 'Gruppi Militari (GM)'
 }
 
+def estrai_verita_assoluta(item):
+    """Ignora chi ci ha mandato i dati e legge la targa originale della gara"""
+    livello = str(item.get("livello", "")).upper()
+    if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
+        return "Internazionale/FIS"
+
+    # 1. Targa Comitato ufficiale
+    sigla = str(item.get("codiceComitato", "")).strip().upper()
+    if not sigla: sigla = str(item.get("comitato", "")).strip().upper()
+    if sigla in MAPPA_SIGLE: return MAPPA_SIGLE[sigla]
+
+    # 2. Targa Società (Es: SIC0123 -> SIC = Sicilia)
+    soc = str(item.get("codiceSocieta", "")).strip().upper()
+    for s in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
+        if soc.startswith(s): return MAPPA_SIGLE[s]
+
+    # 3. Se non c'è targa (rarissimo), marchiamo come Varie
+    return "Altre / Non Assegnate"
+
 # =====================================================================
-# 🗓️ FASE 1: DOWNLOAD E TRIBUNALE DELLE GARE
+# 🗓️ FASE 1: DOWNLOAD GLOBALE E LETTURA DEL DNA
 # =====================================================================
 def spider_calendari_nazionale():
-    print("--- 🚀 FASE 1: DOWNLOAD GLOBALE E TRIBUNALE DELLE GARE ---", flush=True)
+    print("--- 🚀 FASE 1: DOWNLOAD MASSIVO E SMISTAMENTO TARGHE ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
     mese_corrente = datetime.datetime.now().month
@@ -54,15 +72,12 @@ def spider_calendari_nazionale():
     
     LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
     
-    # 🧠 LE MENTI DELL'ALGORITMO
-    reclamazioni = defaultdict(list)    # Tiene traccia di chi reclama cosa: {"id_123": ["Veneto", "Valdostano"]}
-    conteggio_comitato = defaultdict(int) # Conta quanto è grande il bottino di ogni comitato (per scovare chi ha il filtro rotto)
-    gare_dati = {} # Salva i dati grezzi della gara per usarli dopo
+    gare_uniche_grezze = {} # Qui buttiamo tutte le gare estratte per non avere doppioni
     
-    # --- 1. FASE DI DOWNLOAD (Ognuno prende quello che gli dà il server) ---
-    for nome_comitato, slug_sito in COMITATI_FISI.items():
-        print(f"\n🌍 Scarico calendario da: {nome_comitato}...", flush=True)
-        
+    print("🌍 Sto spazzolando tutti i server d'Italia...", flush=True)
+    
+    # 1. FASE DI RACCOLTA (Prendiamo tutto quello che ci danno)
+    for slug_sito in COMITATI_FISI:
         for anno in stagioni_da_scaricare:
             offset = 0
             limit = 200
@@ -93,56 +108,43 @@ def spider_calendari_nazionale():
                         is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
                         
                         if is_fondo and not is_proibita:
-                            # Registriamo la reclamazione!
-                            if nome_comitato not in reclamazioni[id_comp]:
-                                reclamazioni[id_comp].append(nome_comitato)
-                                conteggio_comitato[nome_comitato] += 1
-                                gare_dati[id_comp] = item # Salviamo i dati nel cassetto
+                            # Salviamo la gara grezza (sovrascrive eventuali doppioni automaticamente)
+                            gare_uniche_grezze[id_comp] = item
                                 
                     if len(data) < limit: break
                     offset += limit
                     
                 except Exception:
                     break 
-            
-            time.sleep(0.1)
+                    
+    print(f"📦 Raccolta finita. Trovate {len(gare_uniche_grezze)} gare di Fondo uniche in tutta Italia.", flush=True)
+    print("🔍 Inizio lettura delle targhe (DNA) per l'assegnazione regionale...", flush=True)
 
-    # --- 2. IL TRIBUNALE (Risoluzione dei conflitti) ---
-    print("\n⚖️ IL TRIBUNALE È APERTO: Risoluzione dei furti tra comitati in corso...", flush=True)
+    # 2. FASE DI ASSEGNAZIONE CHIRURGICA
     all_gare_fondo = []
-    conflitti_risolti = 0
     
-    for id_gara, comitati_reclamanti in reclamazioni.items():
-        data = gare_dati[id_gara]
+    for id_gara, item_grezzo in gare_uniche_grezze.items():
+        # ESTRAIAMO IL VERO COMITATO GUARDANDO IL CODICE INTERNO
+        comitato_vero = estrai_verita_assoluta(item_grezzo)
         
-        # Eccezione: Le gare Mondiali non si discutono, sono Internazionali.
-        livello = str(data.get("livello", "")).upper()
-        if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
-            vincitore = "Internazionale/FIS"
-        else:
-            if len(comitati_reclamanti) > 1:
-                conflitti_risolti += 1
-            # 🏆 LA MAGIA: Vince chi ha il calendario più piccolo! (Filtro funzionante batte Filtro rotto)
-            vincitore = min(comitati_reclamanti, key=lambda c: conteggio_comitato[c])
-            
         record = {
             "id_gara_fisi": id_gara, 
-            "gara_nome": data.get("nome", "Gara Senza Nome"),
-            "luogo": data.get("comune", "N/D"), 
-            "data_gara": data.get("dataInizio", "N/D"), 
-            "comitato": vincitore 
+            "gara_nome": item_grezzo.get("nome", "Gara Senza Nome"),
+            "luogo": item_grezzo.get("comune", "N/D"), 
+            "data_gara": item_grezzo.get("dataInizio", "N/D"), 
+            "comitato": comitato_vero 
         }
         all_gare_fondo.append(record)
 
-    # --- 3. SALVATAGGIO ---
+    # 3. SALVATAGGIO NEL DATABASE
     if all_gare_fondo:
         for i in range(0, len(all_gare_fondo), 1000):
             pacchetto = all_gare_fondo[i:i+1000]
             supabase.table("Gare").upsert(pacchetto).execute()
-        print(f"\n✅ TRIONFO: Salvate {len(all_gare_fondo)} gare uniche. Risolti {conflitti_risolti} conflitti di assegnazione!", flush=True)
+        print(f"\n✅ TRIONFO: Salvate {len(all_gare_fondo)} gare! Capracotta è tornata al Sud e l'Etna in Sicilia!", flush=True)
     else:
         print("\n❌ Nessuna gara salvata.", flush=True)
 
 if __name__ == "__main__":
     spider_calendari_nazionale()
-    # spider_atleti_master() <-- SBLOCCAMI DOPO IL TEST!
+    # spider_atleti_master() <-- Disattivata per il test
