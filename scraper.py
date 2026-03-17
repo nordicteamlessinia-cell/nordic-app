@@ -5,6 +5,7 @@ from urllib3.util.retry import Retry
 import time
 import datetime
 import re
+from collections import defaultdict
 from supabase import create_client
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
@@ -21,7 +22,6 @@ session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)
 
 BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
 
-# 🥇 LA FILA INDIANA
 COMITATI_FISI = {
     'trentino': 'Trentino (TN)', 'alto-adige': 'Alto Adige (AA)', 'veneto': 'Veneto (VE)',
     'alpi-centrali': 'Alpi Centrali (AC)', 'alpi-occidentali': 'Alpi Occidentali (AOC)',
@@ -33,7 +33,6 @@ COMITATI_FISI = {
     'ligure': 'Ligure (LIG)', 'asiva': 'Valdostano (ASIVA)'
 }
 
-# 🎯 DECODER COMITATI 
 MAPPA_NOMI_COMITATI = {
     'TRENTINO': 'Trentino (TN)', 'TN': 'Trentino (TN)',
     'ALTO ADIGE': 'Alto Adige (AA)', 'AA': 'Alto Adige (AA)', 'SUDTIROL': 'Alto Adige (AA)', 'BZ': 'Alto Adige (AA)',
@@ -54,7 +53,6 @@ MAPPA_NOMI_COMITATI = {
     'SICULO': 'Siculo (SIC)', 'SIC': 'Siculo (SIC)', 'GM': 'Gruppi Militari (GM)'
 }
 
-# 🗺️ MAPPA PROVINCE 
 MAPPA_PROVINCE = {
     'TN': 'Trentino (TN)', 'BZ': 'Alto Adige (AA)', 'AO': 'Valdostano (ASIVA)',
     'AL': 'Alpi Occidentali (AOC)', 'AT': 'Alpi Occidentali (AOC)', 'BI': 'Alpi Occidentali (AOC)',
@@ -92,30 +90,29 @@ MAPPA_PROVINCE = {
     'RG': 'Siculo (SIC)', 'SR': 'Siculo (SIC)', 'TP': 'Siculo (SIC)'
 }
 
-# 📍 IL GPS INTERNO AGGIORNATO CON LE TUE CORREZIONI
+# 📍 IL SUPER-GPS (Decuplicato per catturare tutte le gare senza metadati)
 MAPPA_LUOGHI = {
-    'CAPRACOTTA': 'Campano (CAM)', 'LAGO LACENO': 'Campano (CAM)', 'CAMPITELLO MATESE': 'Campano (CAM)',
-    'NICOLOSI': 'Siculo (SIC)', 'LINGUAGLOSSA': 'Siculo (SIC)', 'PIANO PROVENZANA': 'Siculo (SIC)', 'ETNA': 'Siculo (SIC)',
-    'COGNE': 'Valdostano (ASIVA)', 'GRESSONEY': 'Valdostano (ASIVA)', 'BRUSSON': 'Valdostano (ASIVA)', 
-    'BIONAZ': 'Valdostano (ASIVA)', 'FLASSIN': 'Valdostano (ASIVA)', 'COURMAYEUR': 'Valdostano (ASIVA)', 
-    'VALSAVARENCHE': 'Valdostano (ASIVA)', 'SAINT BARTHELEMY': 'Valdostano (ASIVA)', 'TORGNON': 'Valdostano (ASIVA)',
-    'SAINT-OYEN': 'Valdostano (ASIVA)', 'SAINT OYEN': 'Valdostano (ASIVA)',
-    'VALTOURNENCHE': 'Valdostano (ASIVA)', 'VERRAYES': 'Valdostano (ASIVA)',
-    'BOSCO CHIESANUOVA': 'Veneto (VE)', 'ROVERE': 'Veneto (VE)', 'ASIAGO': 'Veneto (VE)', 'GALLIO': 'Veneto (VE)', 'CORTINA': 'Veneto (VE)',
-    'DOBBIACO': 'Alto Adige (AA)', 'ANTERSELVA': 'Alto Adige (AA)', 'VAL RIDANNA': 'Alto Adige (AA)', 'SESTO': 'Alto Adige (AA)',
-    'TESERO': 'Trentino (TN)', 'PASSO CEREDA': 'Trentino (TN)', 'VERMIGLIO': 'Trentino (TN)',
-    'SCHILPARIO': 'Alpi Centrali (AC)', 'LIVIGNO': 'Alpi Centrali (AC)', 'SANTA CATERINA': 'Alpi Centrali (AC)',
-    'FORNI AVOLTRI': 'Friuli Venezia Giulia (FVG)', 'TARVISIO': 'Friuli Venezia Giulia (FVG)', 'PIANCAVALLO': 'Friuli Venezia Giulia (FVG)',
-    'PRAGELATO': 'Alpi Occidentali (AOC)', 'ENTRACQUE': 'Alpi Occidentali (AOC)', 'FORMAZZA': 'Alpi Occidentali (AOC)',
-    'ROCCARASO': 'Abruzzo (CAB)', 'PESCOCOSTANZO': 'Abruzzo (CAB)', 'OPI': 'Abruzzo (CAB)',
-    'CAMIGLIATELLO': 'Calabro Lucano (CAL)', 'LORICA': 'Calabro Lucano (CAL)',
-    'PIEVEPELAGO': 'Appennino Emiliano (CAE)', 'FRASSINORO': 'Appennino Emiliano (CAE)', 'SCHIA': 'Appennino Emiliano (CAE)'
+    'CAPRACOTTA': 'Campano (CAM)', 'LAGO LACENO': 'Campano (CAM)', 'CAMPITELLO MATESE': 'Campano (CAM)', 'BAGNOLI IRPINO': 'Campano (CAM)', 'PESCOPENNATARO': 'Campano (CAM)', 'BOJANO': 'Campano (CAM)',
+    'NICOLOSI': 'Siculo (SIC)', 'LINGUAGLOSSA': 'Siculo (SIC)', 'PIANO PROVENZANA': 'Siculo (SIC)', 'ETNA': 'Siculo (SIC)', 'MADONIE': 'Siculo (SIC)',
+    'COGNE': 'Valdostano (ASIVA)', 'GRESSONEY': 'Valdostano (ASIVA)', 'BRUSSON': 'Valdostano (ASIVA)', 'BIONAZ': 'Valdostano (ASIVA)', 'FLASSIN': 'Valdostano (ASIVA)', 'COURMAYEUR': 'Valdostano (ASIVA)', 'VALSAVARENCHE': 'Valdostano (ASIVA)', 'SAINT BARTHELEMY': 'Valdostano (ASIVA)', 'TORGNON': 'Valdostano (ASIVA)', 'SAINT-OYEN': 'Valdostano (ASIVA)', 'SAINT OYEN': 'Valdostano (ASIVA)', 'VALTOURNENCHE': 'Valdostano (ASIVA)', 'VERRAYES': 'Valdostano (ASIVA)', 'OLLOMONT': 'Valdostano (ASIVA)', 'RHEMES': 'Valdostano (ASIVA)', 'CHAMPORCHER': 'Valdostano (ASIVA)', 'LA THUILE': 'Valdostano (ASIVA)', 'MORGEX': 'Valdostano (ASIVA)', 'FONTAINEMORE': 'Valdostano (ASIVA)', 'AYAS': 'Valdostano (ASIVA)', 'ANTEY': 'Valdostano (ASIVA)',
+    'BOSCO CHIESANUOVA': 'Veneto (VE)', 'ROVERE': 'Veneto (VE)', 'ASIAGO': 'Veneto (VE)', 'GALLIO': 'Veneto (VE)', 'CORTINA': 'Veneto (VE)', 'FALCADE': 'Veneto (VE)', 'SAPPADA': 'Veneto (VE)', 'PADOLA': 'Veneto (VE)', 'VAL VISDENDE': 'Veneto (VE)',
+    'DOBBIACO': 'Alto Adige (AA)', 'ANTERSELVA': 'Alto Adige (AA)', 'VAL RIDANNA': 'Alto Adige (AA)', 'SESTO': 'Alto Adige (AA)', 'CASIES': 'Alto Adige (AA)', 'SLUDERNO': 'Alto Adige (AA)', 'SARENTINO': 'Alto Adige (AA)', 'CORVARA': 'Alto Adige (AA)', 'LACES': 'Alto Adige (AA)',
+    'TESERO': 'Trentino (TN)', 'PASSO CEREDA': 'Trentino (TN)', 'VERMIGLIO': 'Trentino (TN)', 'LAVARONE': 'Trentino (TN)', 'BONDONE': 'Trentino (TN)', 'VAL DI SOLE': 'Trentino (TN)', 'VAL DI FIEMME': 'Trentino (TN)', 'RABBI': 'Trentino (TN)',
+    'SCHILPARIO': 'Alpi Centrali (AC)', 'LIVIGNO': 'Alpi Centrali (AC)', 'SANTA CATERINA': 'Alpi Centrali (AC)', 'CHIESA VALMALENCO': 'Alpi Centrali (AC)', 'PASSO SAN PELLEGRINO': 'Alpi Centrali (AC)', 'BORMIO': 'Alpi Centrali (AC)', 'VALDIDENTRO': 'Alpi Centrali (AC)', 'SPIAZZI': 'Alpi Centrali (AC)',
+    'FORNI AVOLTRI': 'Friuli Venezia Giulia (FVG)', 'TARVISIO': 'Friuli Venezia Giulia (FVG)', 'PIANCAVALLO': 'Friuli Venezia Giulia (FVG)', 'SUTRIO': 'Friuli Venezia Giulia (FVG)', 'FORNI DI SOPRA': 'Friuli Venezia Giulia (FVG)',
+    'PRAGELATO': 'Alpi Occidentali (AOC)', 'ENTRACQUE': 'Alpi Occidentali (AOC)', 'FORMAZZA': 'Alpi Occidentali (AOC)', 'SESTRIERE': 'Alpi Occidentali (AOC)', 'BARDONECCHIA': 'Alpi Occidentali (AOC)', 'VALLE STURA': 'Alpi Occidentali (AOC)', 'CHIUSA PESIO': 'Alpi Occidentali (AOC)', 'MARMORA': 'Alpi Occidentali (AOC)', 'PRALI': 'Alpi Occidentali (AOC)',
+    'ROCCARASO': 'Abruzzo (CAB)', 'PESCOCOSTANZO': 'Abruzzo (CAB)', 'OPI': 'Abruzzo (CAB)', 'BARREA': 'Abruzzo (CAB)', 'SCANNO': 'Abruzzo (CAB)', 'CAMPO FELICE': 'Abruzzo (CAB)', 'CAMPO IMPERATORE': 'Abruzzo (CAB)', 'OVINDOLI': 'Abruzzo (CAB)',
+    'CAMIGLIATELLO': 'Calabro Lucano (CAL)', 'LORICA': 'Calabro Lucano (CAL)', 'SAN GIOVANNI IN FIORE': 'Calabro Lucano (CAL)', 'CARLOMAGNO': 'Calabro Lucano (CAL)',
+    'PIEVEPELAGO': 'Appennino Emiliano (CAE)', 'FRASSINORO': 'Appennino Emiliano (CAE)', 'SCHIA': 'Appennino Emiliano (CAE)', 'PIANDELAGOTTI': 'Appennino Emiliano (CAE)', 'SANT\'ANNAPELAGO': 'Appennino Emiliano (CAE)', 'CERRETO': 'Appennino Emiliano (CAE)',
+    'ABETONE': 'Appennino Toscano (CAT)', 'FOSCIANDORA': 'Appennino Toscano (CAT)',
+    'BOLOGNOLA': 'Umbro Marchigiano (CUM)', 'SARNANO': 'Umbro Marchigiano (CUM)', 'FORCA CANAPINE': 'Umbro Marchigiano (CUM)'
 }
 
 FONDO_KEYWORDS = ["FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDIC", "NORDICO", "XC"]
 LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
 
-def estrai_comitato_master(item, fallback_nome):
+def estrai_comitato_master(item):
+    """Estrazione Pura (0 a 4). Il livello 5 viene gestito dopo dal Tribunale."""
     livello = str(item.get("livello", "")).upper()
     if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
         return "Internazionale/FIS", 0
@@ -129,25 +126,22 @@ def estrai_comitato_master(item, fallback_nome):
     pref = re.match(r"^[A-Z]+", soc)
     if pref:
         sigla_soc = pref.group(0)
-        if sigla_soc in ["AO", "VA", "VDA", "ASIVA"]:
-            return "Valdostano (ASIVA)", 2
-        if sigla_soc in MAPPA_PROVINCE:
-            return MAPPA_PROVINCE[sigla_soc], 2
+        if sigla_soc in ["AO", "VA", "VDA", "ASIVA"]: return "Valdostano (ASIVA)", 2
+        if sigla_soc in MAPPA_PROVINCE: return MAPPA_PROVINCE[sigla_soc], 2
 
     luogo = str(item.get("comune", "")).upper()
     for loc, comitato_gps in MAPPA_LUOGHI.items():
-        if loc in luogo:
-            return comitato_gps, 3
+        if loc in luogo: return comitato_gps, 3
             
     nome_gara = str(item.get("nome", "")).upper()
     if "VALDOSTAN" in nome_gara or "VAL D'AOSTA" in nome_gara or "ASIVA" in nome_gara: return "Valdostano (ASIVA)", 4
     if "CAMPAN" in nome_gara or "MOLIS" in nome_gara: return "Campano (CAM)", 4
     if "SICIL" in nome_gara or "SICUL" in nome_gara: return "Siculo (SIC)", 4
 
-    return fallback_nome, 5
+    return "", 5 # Caso critico, affidato al Tribunale
 
 # =====================================================================
-# 🗓️ FASE 1: L'ALGORITMO MASTER DEFINITIVO
+# 🗓️ FASE 1: DOWNLOAD MASSIVO E TRIBUNALE INTELLIGENTE
 # =====================================================================
 def spider_calendari_nazionale():
     print("--- 🚀 FASE 1: L'ALGORITMO MASTER IN ESECUZIONE ---", flush=True)
@@ -160,8 +154,11 @@ def spider_calendari_nazionale():
     statistiche = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0} 
     contatore_scansione = 0
     
-    for slug_sito, portale_fallback in COMITATI_FISI.items():
-        print(f"\n🌍 Interrogo il portale: {portale_fallback}...", flush=True)
+    portale_yield = defaultdict(int) # Conta quanto ogni portale "vomita"
+    gare_claims = defaultdict(list)  # Tiene traccia di chi rivendica una gara
+    
+    for slug_sito, portale_nome in COMITATI_FISI.items():
+        print(f"\n🌍 Interrogo il portale: {portale_nome}...", flush=True)
         
         for anno in stagioni_da_scaricare:
             offset = 0
@@ -183,6 +180,8 @@ def spider_calendari_nazionale():
                     for item in data:
                         contatore_scansione += 1
                         id_comp = str(item.get("idCompetizione"))
+                        portale_yield[portale_nome] += 1
+                        
                         disciplina = str(item.get("disciplina", "")).upper()
                         nome_gara = str(item.get("nome", "")).upper()
                         
@@ -191,7 +190,8 @@ def spider_calendari_nazionale():
                         is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
                         
                         if is_fondo and not is_proibita:
-                            comitato_vero, score_affidabilita = estrai_comitato_master(item, portale_fallback)
+                            gare_claims[id_comp].append(portale_nome)
+                            comitato_vero, score_affidabilita = estrai_comitato_master(item)
                             
                             if id_comp in gare_salvate:
                                 if score_affidabilita < gare_salvate[id_comp]["score"]:
@@ -221,10 +221,22 @@ def spider_calendari_nazionale():
                     break 
             time.sleep(0.1)
 
-    print(f"\n✅ Scansione completata. Analizzate in totale {contatore_scansione} righe dal database FISI.")
+    print(f"\n✅ Scansione completata. Avvio Tribunale Intelligente per i fantasmi...")
 
     lista_finale_supabase = []
     for id_gara, record in gare_salvate.items():
+        if record["score"] == 5:
+            # È UN FANTASMA. Chi l'ha reclamata? Vince chi ha il calendario più piccolo (meno buggato)
+            claims = gare_claims[id_gara]
+            best_portal = min(claims, key=lambda p: portale_yield[p])
+            
+            # Se chi ha vinto ha comunque prodotto più di 10.000 gare totali, 
+            # significa che l'hanno vista SOLO i server buggati. È inassegnabile.
+            if portale_yield[best_portal] > 10000:
+                record["comitato"] = "Altre / Non Assegnate"
+            else:
+                record["comitato"] = best_portal
+
         statistiche[record["score"]] += 1
         lista_finale_supabase.append({
             "id_gara_fisi": record["id_gara_fisi"], "gara_nome": record["gara_nome"],
@@ -244,9 +256,9 @@ def spider_calendari_nazionale():
         print(f"   Rank 0 (Internazionali):           {statistiche[0]}")
         print(f"   Rank 1 (Metadato FISI Ufficiale):  {statistiche[1]}")
         print(f"   Rank 2 (Targa Società/Provincia):  {statistiche[2]}")
-        print(f"   Rank 3 (GPS / Mappa Luoghi):       {statistiche[3]}")
+        print(f"   Rank 3 (Super-GPS / Luoghi):       {statistiche[3]}")
         print(f"   Rank 4 (Nome Gara):                {statistiche[4]}")
-        print(f"   Rank 5 (Fallback Sicurezza):       {statistiche[5]}")
+        print(f"   Rank 5 (Tribunale/Fantasmi):       {statistiche[5]}")
     else:
         print("\n❌ Nessuna gara salvata.", flush=True)
 
