@@ -1,0 +1,33 @@
+name: 🔄 Updater Notturno Database FISI
+
+on:
+  schedule:
+    # Esegue lo script ogni notte alle 03:00 (ora server)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    # Ti permette di cliccare il tasto "Run workflow" manualmente da GitHub se vuoi forzarlo
+
+jobs:
+  aggiorna-database:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Installazione librerie
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 supabase
+
+      - name: 🚀 Esecuzione Updater
+        env:
+          # Github prenderà le chiavi segrete che hai già impostato nei Settings del repository
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python updater.py
