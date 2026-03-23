@@ -168,7 +168,7 @@ def esegui_aggiornamento_quotidiano():
     print("--- 🚀 AVVIO UPDATER (DELTA LOAD) ---", flush=True)
     
     anno_corrente = datetime.datetime.now().year
-    # Scarica solo le gare della stagione corrente e delle due precedenti (es. 2024, 2025, 2026)
+    # Scarica solo le gare della stagione corrente e delle due precedenti
     stagioni_da_scaricare = [anno_corrente - 2, anno_corrente - 1, anno_corrente, anno_corrente + 1]
     
     # ---------------------------------------------------------
@@ -212,11 +212,12 @@ def esegui_aggiornamento_quotidiano():
                                     gare_salvate[id_comp]["comitato"] = comitato_vero
                                     gare_salvate[id_comp]["score"] = score_affidabilita
                             else:
+                                # 🎯 FIX: rimossa la chiave 'codice_comitato'
                                 gare_salvate[id_comp] = {
                                     "id_gara_fisi": id_comp, "gara_nome": item.get("nome", "Gara Senza Nome"),
                                     "luogo": item.get("comune", "N/D"), "data_gara": item.get("dataInizio", "N/D"), 
                                     "comitato": comitato_vero, "disciplina": item.get("disciplina", "N/D"), 
-                                    "codice_societa": item.get("codiceSocieta", ""), "codice_comitato": item.get("codiceComitato", ""), 
+                                    "codice_societa": item.get("codiceSocieta", ""), 
                                     "score": score_affidabilita
                                 }
                     if len(data) < limit: break
@@ -232,11 +233,11 @@ def esegui_aggiornamento_quotidiano():
             if portale_yield[best_portal] > 10000: record["comitato"] = "Altre / Non Assegnate"
             else: record["comitato"] = best_portal
 
+        # 🎯 FIX: rimossa la chiave 'codice_comitato' anche da qui
         lista_finale_supabase.append({
             "id_gara_fisi": record["id_gara_fisi"], "gara_nome": record["gara_nome"],
             "luogo": record["luogo"], "data_gara": record["data_gara"], "comitato": record["comitato"],
-            "disciplina": record["disciplina"], "codice_societa": record["codice_societa"], 
-            "codice_comitato": record["codice_comitato"]
+            "disciplina": record["disciplina"], "codice_societa": record["codice_societa"]
         })
 
     if lista_finale_supabase:
