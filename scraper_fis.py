@@ -1,140 +1,139 @@
 import os
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import time
 import datetime
 from supabase import create_client
+from playwright.sync_api import sync_playwright
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ ERRORE CRITICO: Variabili di ambiente Supabase mancanti!")
+    exit(1)
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🛡️ ARMATURA DI RETE
-session = requests.Session()
-retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
-session.mount('https://', HTTPAdapter(max_retries=retries))
-session.mount('http://', HTTPAdapter(max_retries=retries))
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36'})
+def estrai_dati_gara(page, url_gara):
+    """Entra nella pagina della gara ed estrae la classifica"""
+    print(f"   🔍 Analizzo classifica: {url_gara}")
+    page.goto(url_gara, timeout=60000)
+    time.sleep(3) # Diamo tempo al sito FIS di caricare la tabella dinamica
 
-# Torniamo al server che ci rispondeva, ma lo usiamo in modo più intelligente
-BASE_URL_AJAX = "https://comitati.fisi.org/wp-admin/admin-ajax.php"
-
-# 🎯 LE CHIAVI DI ACCESSO PER IL DATABASE
-MAPPA_SIGLE = {
-    'AA': 'Alto Adige (AA)', 'AC': 'Alpi Centrali (AC)', 'AOC': 'Alpi Occidentali (AOC)',
-    'ASIVA': 'Valdostano (ASIVA)', 'CAB': 'Abruzzo (CAB)', 'CAE': 'Appennino Emiliano (CAE)',
-    'CAL': 'Calabro Lucano (CAL)', 'CAM': 'Campano (CAM)', 'CAT': 'Appennino Toscano (CAT)',
-    'CLS': 'Lazio e Sardegna (CLS)', 'CUM': 'Umbro Marchigiano (CUM)', 'FVG': 'Friuli Venezia Giulia (FVG)',
-    'LIG': 'Ligure (LIG)', 'PUG': 'Pugliese (PUG)', 'SIC': 'Siculo (SIC)', 'TN': 'Trentino (TN)',
-    'VE': 'Veneto (VE)'
-}
-
-def estrai_comitato_reale(item, sigla_richiesta):
-    """Il Test del DNA finale"""
-    livello = str(item.get("livello", "")).upper()
-    if "WORLD" in livello or "OPA" in livello or "INTERNAZIONAL" in livello:
-        return "Nazionale/Internazionale"
-
-    # 1. Leggiamo la sigla dal JSON
-    c = str(item.get("codiceComitato", "")).strip().upper()
-    if not c: c = str(item.get("comitato", "")).strip().upper()
-    if c in MAPPA_SIGLE: return MAPPA_SIGLE[c]
-
-    # 2. Leggiamo la targa dello Sci Club (es. FVG0014)
-    soc = str(item.get("codiceSocieta", "")).strip().upper()
-    for s in sorted(MAPPA_SIGLE.keys(), key=len, reverse=True):
-        if soc.startswith(s): return MAPPA_SIGLE[s]
-
-    # 3. Se tutto fallisce, gli assegniamo la sigla che avevamo richiesto all'API
-    if sigla_richiesta in MAPPA_SIGLE: return MAPPA_SIGLE[sigla_richiesta]
+    risultati_da_salvare = []
     
-    return "Sconosciuto"
+    try:
+        # Estrazione Dati Generali Gara (Testata)
+        id_gara = url_gara.split("raceid=")[-1].split("&")[0]
+        luogo = page.locator(".event-header__name h1").inner_text(timeout=5000).strip() if page.locator(".event-header__name h1").count() > 0 else "N/D"
+        data_gara_raw = page.locator(".date__full").inner_text().strip() if page.locator(".date__full").count() > 0 else datetime.datetime.now().strftime("%d/%m/%Y")
+        categoria = page.locator(".event-header__kind").inner_text().strip() if page.locator(".event-header__kind").count() > 0 else "FIS"
+        specialita = page.locator(".event-header__subtitle").inner_text().strip() if page.locator(".event-header__subtitle").count() > 0 else "Cross-Country"
 
-# =====================================================================
-# 🗓️ FASE 1: INTERROGAZIONE CHIRURGICA DEL DATABASE
-# =====================================================================
-def spider_calendari_nazionale():
-    print("--- 🚀 FASE 1: SCANSIONE CHIRURGICA PER COMITATO ---", flush=True)
+        # Troviamo tutte le righe degli atleti
+        righe_atleti = page.locator("a.table-row")
+        numero_atleti = righe_atleti.count()
+        print(f"   ⛷️ Trovati {numero_atleti} atleti in classifica.")
+
+        for i in range(numero_atleti):
+            riga = righe_atleti.nth(i)
+            
+            # Estrazione sicura dei dati dalla riga (try/except inline per evitare blocchi se manca un dato)
+            try: posizione = riga.locator(".pr-1").inner_text().strip()
+            except: posizione = str(i+1)
+            
+            try: codice_fis = riga.locator(".g-md-1").inner_text().strip()
+            except: codice_fis = "N/D"
+            
+            try: atleta_nome = riga.locator(".justify-content-md-start").inner_text().strip()
+            except: atleta_nome = "Sconosciuto"
+            
+            try: nazione = riga.locator(".country__name-short").inner_text().strip()
+            except: nazione = "N/D"
+            
+            try: tempo = riga.locator(".justify-content-end.pr-1").inner_text().strip()
+            except: tempo = "N/D"
+            
+            try: punti_fis = riga.locator(".pl-1.g-sm-1").inner_text().strip()
+            except: punti_fis = "0.00"
+
+            record = {
+                "id_gara_fis": id_gara,
+                "data_gara": data_gara_raw,
+                "luogo": luogo,
+                "posizione": posizione,
+                "codice_fis": codice_fis,
+                "atleta_nome": atleta_nome.replace("\n", " "), # Pulisce eventuali a capo sporchi
+                "nazione": nazione,
+                "tempo": tempo,
+                "punti_fis": punti_fis,
+                "categoria": categoria,
+                "specialita": specialita,
+                "nome_comitato": "Internazionale", # Valore fisso per le gare FIS
+                "comitato": "Internazionale"       # Valore fisso per le gare FIS
+            }
+            risultati_da_salvare.append(record)
+            
+    except Exception as e:
+        print(f"   ⚠️ Errore nell'estrazione della gara {url_gara}: {e}")
+
+    return risultati_da_salvare
+
+
+def avvia_scraper_fis():
+    print("--- 🚀 AVVIO BOT SCRAPER FIS (CROSS-COUNTRY) ---", flush=True)
     
-    anno_corrente = datetime.datetime.now().year
-    mese_corrente = datetime.datetime.now().month
-    anno_massimo = anno_corrente + 1 if mese_corrente >= 6 else anno_corrente
-    stagioni_da_scaricare = list(range(2020, anno_massimo + 1))
-    
-    LISTA_NERA = ["ALPINO", "SLALOM", "GIGANTE", "GS", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO"]
-    gare_viste_globali = set()
-    totale_salvate = 0
-    
-    for anno in stagioni_da_scaricare:
-        print(f"\n📅 Elaborazione Anno {anno}...", flush=True)
-        all_gare_fondo = []
+    with sync_playwright() as p:
+        # Avviamo il browser fantasma
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+
+        # 1. Andiamo sul calendario FIS Cross-Country
+        print("🌍 Mi collego al calendario FIS ufficiale...")
+        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html", timeout=60000)
         
-        # Facciamo una richiesta specifica per ogni singola regione!
-        for sigla, nome_esteso in MAPPA_SIGLE.items():
-            offset = 0
-            limit = 200
+        # Gestione Popup Cookie (se appare, lo clicchiamo per non averlo tra i piedi)
+        if page.locator("#onetrust-accept-btn-handler").count() > 0:
+            page.locator("#onetrust-accept-btn-handler").click()
+            time.sleep(1)
+
+        # 2. Raccogliamo i link delle gare recenti
+        # Cerchiamo tutti i link che portano a una classifica (contengono "raceid")
+        link_elementi = page.locator("a[href*='raceid=']")
+        numero_link = link_elementi.count()
+        
+        url_gare_trovate = set()
+        for i in range(numero_link):
+            href = link_elementi.nth(i).get_attribute("href")
+            if href:
+                # Costruiamo l'URL completo
+                url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
+                url_gare_trovate.add(url_completo)
+        
+        print(f"🎯 Trovate {len(url_gare_trovate)} gare nel calendario attuale.")
+
+        # 3. Analizziamo ogni gara e salviamo su Supabase
+        totale_salvati = 0
+        for url in url_gare_trovate:
+            risultati = estrai_dati_gara(page, url)
             
-            while True:
-                # Questa è la chiave: forziamo il comitato nei parametri dell'API
-                params = {
-                    "action": "competizioni_get_all",
-                    "idStagione": str(anno),
-                    "comitato": sigla, 
-                    "limit": limit,
-                    "offset": offset
-                }
-                
+            if risultati:
+                # Salvataggio su Supabase
                 try:
-                    r = session.get(BASE_URL_AJAX, params=params, timeout=15)
-                    data = r.json()
-                    
-                    if not data or not isinstance(data, list) or len(data) == 0:
-                        break # Pagina vuota, passiamo alla prossima sigla
-                        
-                    for item in data:
-                        id_comp = str(item.get("idCompetizione"))
-                        if id_comp in gare_viste_globali: continue
-                            
-                        disciplina = str(item.get("disciplina", "")).upper()
-                        nome_gara = str(item.get("nome", "")).upper()
-                        
-                        is_fondo = any(k in disciplina for k in ["FONDO", "LANGLAUF", "NORDICO", "XC"]) or \
-                                   any(k in nome_gara for k in ["FONDO", "LANGLAUF", "NORDICO", "CROSS COUNTRY", "XC"])
-                        is_proibita = any(k in nome_gara for k in LISTA_NERA) or any(k in disciplina for k in LISTA_NERA)
-                        
-                        if is_fondo and not is_proibita:
-                            gare_viste_globali.add(id_comp)
-                            
-                            comitato_vero = estrai_comitato_reale(item, sigla)
-
-                            record = {
-                                "id_gara_fisi": id_comp, 
-                                "gara_nome": item.get("nome", "Gara Senza Nome"),
-                                "luogo": item.get("comune", "N/D"), 
-                                "data_gara": item.get("dataInizio", "N/D"), 
-                                "comitato": comitato_vero 
-                            }
-                            all_gare_fondo.append(record)
-                            
-                    if len(data) < limit: break
-                    offset += limit
-                    
-                except Exception:
-                    break # In caso di errore, skippa
+                    # Usiamo upsert per non creare doppioni se il bot gira due volte
+                    supabase.table("Risultati_Fis").upsert(risultati).execute()
+                    totale_salvati += len(risultati)
+                    print(f"   ✅ Salvati {len(risultati)} atleti per questa gara nel database.")
+                except Exception as e:
+                    print(f"   ❌ Errore durante il salvataggio su Supabase: {e}")
             
-            time.sleep(0.1)
-            
-        if all_gare_fondo:
-            supabase.table("Gare").upsert(all_gare_fondo).execute()
-            totale_salvate += len(all_gare_fondo)
-            print(f"   ✅ Anno {anno} concluso: Salvate {len(all_gare_fondo)} gare di fondo.", flush=True)
-        else:
-            print(f"   ⏩ Anno {anno} concluso: Nessuna gara di fondo trovata.", flush=True)
+            time.sleep(2) # Pausa di cortesia per non bombardare i server FIS
 
-    print(f"\n🏆 FASE 1 COMPLETATA! Totale Assoluto Gare Italia: {totale_salvate}", flush=True)
+        browser.close()
+        print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati oggi: {totale_salvati}", flush=True)
 
 if __name__ == "__main__":
-    spider_calendari_nazionale()
-    # spider_atleti_master() <-- Fase 2 disattivata per il check veloce
+    avvia_scraper_fis()
