@@ -25,10 +25,18 @@ def estrai_dati_gara(page, url_gara):
     try:
         # Estrazione Dati Generali Gara (Testata)
         id_gara = url_gara.split("raceid=")[-1].split("&")[0]
-        luogo = page.locator(".event-header__name h1").inner_text(timeout=5000).strip() if page.locator(".event-header__name h1").count() > 0 else "N/D"
-        data_gara_raw = page.locator(".date__full").inner_text().strip() if page.locator(".date__full").count() > 0 else datetime.datetime.now().strftime("%d/%m/%Y")
-        categoria = page.locator(".event-header__kind").inner_text().strip() if page.locator(".event-header__kind").count() > 0 else "FIS"
-        specialita = page.locator(".event-header__subtitle").inner_text().strip() if page.locator(".event-header__subtitle").count() > 0 else "Cross-Country"
+        
+        luogo_elem = page.locator(".event-header__name h1")
+        luogo = luogo_elem.inner_text(timeout=5000).strip() if luogo_elem.count() > 0 else "N/D"
+        
+        data_elem = page.locator(".date__full")
+        data_gara_raw = data_elem.inner_text().strip() if data_elem.count() > 0 else datetime.datetime.now().strftime("%d/%m/%Y")
+        
+        cat_elem = page.locator(".event-header__kind")
+        categoria = cat_elem.inner_text().strip() if cat_elem.count() > 0 else "FIS"
+        
+        spec_elem = page.locator(".event-header__subtitle")
+        specialita = spec_elem.inner_text().strip() if spec_elem.count() > 0 else "Cross-Country"
 
         # Troviamo tutte le righe degli atleti
         righe_atleti = page.locator("a.table-row")
@@ -86,22 +94,30 @@ def avvia_scraper_fis():
     with sync_playwright() as p:
         # Avviamo il browser fantasma
         browser = p.chromium.launch(headless=True)
+        # Inganniamo i sistemi anti-bot facendogli credere che siamo un vero utente su Mac
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
         )
         page = context.new_page()
 
-        # 1. Andiamo sul calendario FIS Cross-Country
-        print("🌍 Mi collego al calendario FIS ufficiale...")
-        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html", timeout=60000)
+        # 1. Andiamo sul calendario FIS forzando l'anno 2026 intero!
+        print("🌍 Mi collego al calendario FIS (Stagione 2026)...")
+        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026", timeout=60000)
         
-        # Gestione Popup Cookie (se appare, lo clicchiamo per non averlo tra i piedi)
+        # Gestione Popup Cookie (se appare, lo chiudiamo)
         if page.locator("#onetrust-accept-btn-handler").count() > 0:
             page.locator("#onetrust-accept-btn-handler").click()
             time.sleep(1)
 
-        # 2. Raccogliamo i link delle gare recenti
-        # Cerchiamo tutti i link che portano a una classifica (contengono "raceid")
+        print("⏳ Aspetto che la tabella dinamica si carichi...")
+        # Aspettiamo esplicitamente che compaia almeno un link di gara prima di procedere
+        try:
+            page.wait_for_selector("a[href*='raceid=']", timeout=15000)
+        except:
+            print("⚠️ Nessuna gara apparsa dopo 15 secondi. Il calendario potrebbe essere vuoto o il sito ha bloccato la vista.")
+
+        # 2. Raccogliamo i link delle gare
         link_elementi = page.locator("a[href*='raceid=']")
         numero_link = link_elementi.count()
         
@@ -109,28 +125,26 @@ def avvia_scraper_fis():
         for i in range(numero_link):
             href = link_elementi.nth(i).get_attribute("href")
             if href:
-                # Costruiamo l'URL completo
                 url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
                 url_gare_trovate.add(url_completo)
         
-        print(f"🎯 Trovate {len(url_gare_trovate)} gare nel calendario attuale.")
+        print(f"🎯 Trovate {len(url_gare_trovate)} gare nel calendario.")
 
-        # 3. Analizziamo ogni gara e salviamo su Supabase
+        # 3. Analizziamo le singole gare e le salviamo su Supabase
         totale_salvati = 0
         for url in url_gare_trovate:
             risultati = estrai_dati_gara(page, url)
             
             if risultati:
-                # Salvataggio su Supabase
                 try:
-                    # Usiamo upsert per non creare doppioni se il bot gira due volte
+                    # Upsert salva senza duplicare chi c'è già
                     supabase.table("Risultati_Fis").upsert(risultati).execute()
                     totale_salvati += len(risultati)
-                    print(f"   ✅ Salvati {len(risultati)} atleti per questa gara nel database.")
+                    print(f"   ✅ Salvati {len(risultati)} atleti.")
                 except Exception as e:
                     print(f"   ❌ Errore durante il salvataggio su Supabase: {e}")
             
-            time.sleep(2) # Pausa di cortesia per non bombardare i server FIS
+            time.sleep(2) # Pausa di cortesia
 
         browser.close()
         print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati oggi: {totale_salvati}", flush=True)
