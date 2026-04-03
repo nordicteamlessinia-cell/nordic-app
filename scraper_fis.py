@@ -38,31 +38,43 @@ def estrai_dati_gara(page, url_gara):
         spec_elem = page.locator(".event-header__subtitle")
         specialita = spec_elem.inner_text().strip() if spec_elem.count() > 0 else "Cross-Country"
 
-        # Troviamo tutte le righe degli atleti
+        # Troviamo tutte le righe
         righe_atleti = page.locator("a.table-row")
         numero_atleti = righe_atleti.count()
-        print(f"   ⛷️ Trovati {numero_atleti} atleti in classifica.")
+        print(f"   ⛷️ Analizzo {numero_atleti} righe trovate...")
 
         for i in range(numero_atleti):
             riga = righe_atleti.nth(i)
             
-            # Estrazione sicura dei dati dalla riga (try/except inline per evitare blocchi se manca un dato)
-            try: posizione = riga.locator(".pr-1").inner_text().strip()
+            # 1. Cerchiamo il Codice FIS (Deve essere un numero!)
+            try: codice_fis = riga.locator(".g-md-1").first.inner_text().strip()
+            except: codice_fis = ""
+            
+            # 🛡️ IL BUTTAFUORI: Se non c'è un codice FIS numerico, NON è un atleta!
+            # Potrebbe essere una riga del calendario, un evento a squadre o il nome della tappa.
+            if not codice_fis.isdigit() or len(codice_fis) < 5:
+                continue 
+
+            # 2. Estrazione Posizione
+            try: posizione = riga.locator(".pr-1").first.inner_text().strip()
             except: posizione = str(i+1)
             
-            try: codice_fis = riga.locator(".g-md-1").inner_text().strip()
-            except: codice_fis = "N/D"
+            # 3. Estrazione Nome (Miriamo solo alla colonna larga dedicata ai nomi)
+            try: 
+                nome_elem = riga.locator(".g-lg-4, .g-md-4").first
+                atleta_nome = nome_elem.inner_text().strip()
+            except: 
+                atleta_nome = "Sconosciuto"
             
-            try: atleta_nome = riga.locator(".justify-content-md-start").inner_text().strip()
-            except: atleta_nome = "Sconosciuto"
-            
-            try: nazione = riga.locator(".country__name-short").inner_text().strip()
+            # 4. Estrazione Nazione
+            try: nazione = riga.locator(".country__name-short").first.inner_text().strip()
             except: nazione = "N/D"
             
-            try: tempo = riga.locator(".justify-content-end.pr-1").inner_text().strip()
+            # 5. Estrazione Tempo e Punti
+            try: tempo = riga.locator(".justify-content-end.pr-1").first.inner_text().strip()
             except: tempo = "N/D"
             
-            try: punti_fis = riga.locator(".pl-1.g-sm-1").inner_text().strip()
+            try: punti_fis = riga.locator(".pl-1.g-sm-1").first.inner_text().strip()
             except: punti_fis = "0.00"
 
             record = {
@@ -77,8 +89,8 @@ def estrai_dati_gara(page, url_gara):
                 "punti_fis": punti_fis,
                 "categoria": categoria,
                 "specialita": specialita,
-                "nome_comitato": "Internazionale", # Valore fisso per le gare FIS
-                "comitato": "Internazionale"       # Valore fisso per le gare FIS
+                "nome_comitato": "Internazionale",
+                "comitato": "Internazionale"
             }
             risultati_da_salvare.append(record)
             
