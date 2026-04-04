@@ -1,11 +1,8 @@
 import os
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import time
 import datetime
-from bs4 import BeautifulSoup
 from supabase import create_client
+from playwright.sync_api import sync_playwright
 
 # 🟢 INIZIALIZZAZIONE SUPABASE
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -17,82 +14,48 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🛡️ ARMATURA DI RETE (La stessa infallibile del bot italiano!)
-session = requests.Session()
-retries = Retry(total=5, backoff_factor=2, status_forcelist=[ 429, 500, 502, 503, 504 ])
-session.mount('https://', HTTPAdapter(max_retries=retries))
-session.mount('http://', HTTPAdapter(max_retries=retries))
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5'
-})
-
-def estrai_dati_gara(url_gara):
-    """Entra nella pagina della gara ed estrae la classifica usando BeautifulSoup"""
+def estrai_dati_gara(page, url_gara):
+    """Entra nella pagina della gara ed estrae la classifica"""
     print(f"   🔍 Analizzo classifica: {url_gara}")
-    try:
-        res = session.get(url_gara, timeout=20)
-        soup = BeautifulSoup(res.text, 'html.parser')
-    except Exception as e:
-        print(f"   ⚠️ Errore connessione alla gara: {e}")
-        return []
+    page.goto(url_gara, timeout=60000)
+    time.sleep(3) # Diamo tempo al sito FIS di caricare la tabella dinamica
 
     risultati_da_salvare = []
     
     try:
         # Estrazione Dati Generali Gara (Testata)
         id_gara = url_gara.split("raceid=")[-1].split("&")[0]
-        
-        # Luogo
-        h1_elem = soup.find(class_='event-header__name')
-        luogo = h1_elem.find('h1').get_text(strip=True) if h1_elem and h1_elem.find('h1') else "N/D"
-        
-        # Data
-        date_elem = soup.find(class_='date__full')
-        data_gara_raw = date_elem.get_text(strip=True) if date_elem else datetime.datetime.now().strftime("%d/%m/%Y")
-        
-        # Categoria
-        cat_elem = soup.find(class_='event-header__kind')
-        categoria = cat_elem.get_text(strip=True) if cat_elem else "FIS"
-        
-        # Specialità
-        spec_elem = soup.find(class_='event-header__subtitle')
-        specialita = spec_elem.get_text(strip=True) if spec_elem else "Cross-Country"
+        luogo = page.locator(".event-header__name h1").inner_text(timeout=5000).strip() if page.locator(".event-header__name h1").count() > 0 else "N/D"
+        data_gara_raw = page.locator(".date__full").inner_text().strip() if page.locator(".date__full").count() > 0 else datetime.datetime.now().strftime("%d/%m/%Y")
+        categoria = page.locator(".event-header__kind").inner_text().strip() if page.locator(".event-header__kind").count() > 0 else "FIS"
+        specialita = page.locator(".event-header__subtitle").inner_text().strip() if page.locator(".event-header__subtitle").count() > 0 else "Cross-Country"
 
         # Troviamo tutte le righe degli atleti
-        righe_atleti = soup.find_all('a', class_='table-row')
-        print(f"   ⛷️ Analizzo {len(righe_atleti)} righe trovate...")
+        righe_atleti = page.locator("a.table-row")
+        numero_atleti = righe_atleti.count()
+        print(f"   ⛷️ Trovati {numero_atleti} atleti in classifica.")
 
-        for i, riga in enumerate(righe_atleti):
+        for i in range(numero_atleti):
+            riga = righe_atleti.nth(i)
             
-            # 1. Cerchiamo il Codice FIS
-            cod_elem = riga.find(class_='g-md-1')
-            codice_fis = cod_elem.get_text(strip=True) if cod_elem else ""
+            # Estrazione sicura dei dati dalla riga (try/except inline per evitare blocchi se manca un dato)
+            try: posizione = riga.locator(".pr-1").inner_text().strip()
+            except: posizione = str(i+1)
             
-            # 🛡️ IL BUTTAFUORI: Se non c'è un codice FIS numerico, NON è un atleta!
-            if not codice_fis.isdigit() or len(codice_fis) < 5:
-                continue 
-
-            # 2. Posizione
-            pos_elem = riga.find(class_='pr-1')
-            posizione = pos_elem.get_text(strip=True) if pos_elem else str(i+1)
+            try: codice_fis = riga.locator(".g-md-1").inner_text().strip()
+            except: codice_fis = "N/D"
             
-            # 3. Nome
-            nome_elem = riga.find(class_='g-lg-4') or riga.find(class_='g-md-4')
-            atleta_nome = nome_elem.get_text(strip=True).replace("\n", " ") if nome_elem else "Sconosciuto"
+            try: atleta_nome = riga.locator(".justify-content-md-start").inner_text().strip()
+            except: atleta_nome = "Sconosciuto"
             
-            # 4. Nazione
-            naz_elem = riga.find(class_='country__name-short')
-            nazione = naz_elem.get_text(strip=True) if naz_elem else "N/D"
+            try: nazione = riga.locator(".country__name-short").inner_text().strip()
+            except: nazione = "N/D"
             
-            # 5. Tempo
-            tempo_elem = riga.find(class_='justify-content-end pr-1') or riga.find(class_='justify-content-end')
-            tempo = tempo_elem.get_text(strip=True) if tempo_elem else "N/D"
+            try: tempo = riga.locator(".justify-content-end.pr-1").inner_text().strip()
+            except: tempo = "N/D"
             
-            # 6. Punti
-            punti_elem = riga.find(class_='pl-1 g-sm-1') or riga.find(class_='pl-1')
-            punti_fis = punti_elem.get_text(strip=True) if punti_elem else "0.00"
+            try: punti_fis = riga.locator(".pl-1.g-sm-1").inner_text().strip()
+            except: punti_fis = "0.00"
 
             record = {
                 "id_gara_fis": id_gara,
@@ -100,68 +63,77 @@ def estrai_dati_gara(url_gara):
                 "luogo": luogo,
                 "posizione": posizione,
                 "codice_fis": codice_fis,
-                "atleta_nome": atleta_nome,
+                "atleta_nome": atleta_nome.replace("\n", " "), # Pulisce eventuali a capo sporchi
                 "nazione": nazione,
                 "tempo": tempo,
                 "punti_fis": punti_fis,
                 "categoria": categoria,
                 "specialita": specialita,
-                "nome_comitato": "Internazionale",
-                "comitato": "Internazionale"
+                "nome_comitato": "Internazionale", # Valore fisso per le gare FIS
+                "comitato": "Internazionale"       # Valore fisso per le gare FIS
             }
             risultati_da_salvare.append(record)
             
     except Exception as e:
-        print(f"   ⚠️ Errore nell'estrazione: {e}")
+        print(f"   ⚠️ Errore nell'estrazione della gara {url_gara}: {e}")
 
     return risultati_da_salvare
 
 
 def avvia_scraper_fis():
-    print("--- 🚀 AVVIO BOT SCRAPER FIS (MODALITA' INVISIBILE) ---", flush=True)
+    print("--- 🚀 AVVIO BOT SCRAPER FIS (CROSS-COUNTRY) ---", flush=True)
     
-    # 🎯 Includiamo i mesi della stagione agonistica
-    mesi_da_cercare = ["11-2025", "12-2025", "01-2026", "02-2026", "03-2026"]
-    totale_salvati = 0
+    with sync_playwright() as p:
+        # Avviamo il browser fantasma
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
 
-    for mese in mesi_da_cercare:
-        print(f"\n🌍 Mi collego al calendario FIS (Mese: {mese})...")
-        url_mese = f"https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026&seasonmonth={mese}"
+        # 1. Andiamo sul calendario FIS Cross-Country
+        print("🌍 Mi collego al calendario FIS ufficiale...")
+        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html", timeout=60000)
         
-        try:
-            res = session.get(url_mese, timeout=30)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # Peschiamo tutti i link dal codice sorgente
-            links = soup.find_all('a', href=True)
-            url_gare_trovate = set()
-            
-            for l in links:
-                href = l['href']
-                # Controlliamo che sia il link di una gara vera
-                if 'raceid=' in href and 'sectorcode=CC' in href:
-                    url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
-                    url_gare_trovate.add(url_completo)
-            
-            print(f"🎯 Trovate {len(url_gare_trovate)} gare nel mese {mese}.")
+        # Gestione Popup Cookie (se appare, lo clicchiamo per non averlo tra i piedi)
+        if page.locator("#onetrust-accept-btn-handler").count() > 0:
+            page.locator("#onetrust-accept-btn-handler").click()
+            time.sleep(1)
 
-            # Entriamo in ogni gara a estrarre i cioccolatini
-            for url in url_gare_trovate:
-                risultati = estrai_dati_gara(url)
-                if risultati:
-                    try:
-                        supabase.table("Risultati_Fis").upsert(risultati).execute()
-                        totale_salvati += len(risultati)
-                        print(f"   ✅ Salvati {len(risultati)} atleti.")
-                    except Exception as e:
-                        print(f"   ❌ Errore Supabase: {e}")
-                
-                time.sleep(1) # Pausa di cortesia per non bombardare i server
+        # 2. Raccogliamo i link delle gare recenti
+        # Cerchiamo tutti i link che portano a una classifica (contengono "raceid")
+        link_elementi = page.locator("a[href*='raceid=']")
+        numero_link = link_elementi.count()
+        
+        url_gare_trovate = set()
+        for i in range(numero_link):
+            href = link_elementi.nth(i).get_attribute("href")
+            if href:
+                # Costruiamo l'URL completo
+                url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
+                url_gare_trovate.add(url_completo)
+        
+        print(f"🎯 Trovate {len(url_gare_trovate)} gare nel calendario attuale.")
 
-        except Exception as e:
-            print(f"⚠️ Errore col caricamento del mese {mese}: {e}")
+        # 3. Analizziamo ogni gara e salviamo su Supabase
+        totale_salvati = 0
+        for url in url_gare_trovate:
+            risultati = estrai_dati_gara(page, url)
+            
+            if risultati:
+                # Salvataggio su Supabase
+                try:
+                    # Usiamo upsert per non creare doppioni se il bot gira due volte
+                    supabase.table("Risultati_Fis").upsert(risultati).execute()
+                    totale_salvati += len(risultati)
+                    print(f"   ✅ Salvati {len(risultati)} atleti per questa gara nel database.")
+                except Exception as e:
+                    print(f"   ❌ Errore durante il salvataggio su Supabase: {e}")
+            
+            time.sleep(2) # Pausa di cortesia per non bombardare i server FIS
 
-    print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati: {totale_salvati}", flush=True)
+        browser.close()
+        print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati oggi: {totale_salvati}", flush=True)
 
 if __name__ == "__main__":
     avvia_scraper_fis()
