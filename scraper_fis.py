@@ -51,7 +51,7 @@ def estrai_dati_gara(page, url_gara):
             except: codice_fis = ""
             
             # 🛡️ IL BUTTAFUORI: Se non c'è un codice FIS numerico, NON è un atleta!
-            # Potrebbe essere una riga del calendario, un evento a squadre o il nome della tappa.
+            # Scarta in automatico indirizzi, nomi di società, o righe spurie (es. "Via Manzoni")
             if not codice_fis.isdigit() or len(codice_fis) < 5:
                 continue 
 
@@ -113,9 +113,9 @@ def avvia_scraper_fis():
         )
         page = context.new_page()
 
-        # 1. Andiamo sul calendario FIS forzando l'anno 2026 intero!
-        print("🌍 Mi collego al calendario FIS (Stagione 2026)...")
-        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026", timeout=60000)
+        # 1. Andiamo sul calendario FIS forzando tutta la stagione 2026 (Trucco 'X-2026')
+        print("🌍 Mi collego al calendario FIS (Stagione 2026 intera)...")
+        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026&seasonmonth=X-2026", timeout=60000)
         
         # Gestione Popup Cookie (se appare, lo chiudiamo)
         if page.locator("#onetrust-accept-btn-handler").count() > 0:
@@ -156,10 +156,10 @@ def avvia_scraper_fis():
                 except Exception as e:
                     print(f"   ❌ Errore durante il salvataggio su Supabase: {e}")
             
-            time.sleep(2) # Pausa di cortesia
+            time.sleep(2) # Pausa di cortesia per non farsi bloccare dal server FIS
 
         browser.close()
-        print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati oggi: {totale_salvati}", flush=True)
+        print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati: {totale_salvati}", flush=True)
 
 if __name__ == "__main__":
     avvia_scraper_fis()
