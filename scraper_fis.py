@@ -103,60 +103,68 @@ def estrai_dati_gara(page, url_gara):
 def avvia_scraper_fis():
     print("--- 🚀 AVVIO BOT SCRAPER FIS (CROSS-COUNTRY) ---", flush=True)
     
+    # 🎯 Includiamo i mesi di fine 2025 (inizio stagione) e inizio 2026 (fine stagione)
+    mesi_da_cercare = ["11-2025", "12-2025", "01-2026", "02-2026", "03-2026"]
+    totale_salvati = 0
+
     with sync_playwright() as p:
-        # Avviamo il browser fantasma
         browser = p.chromium.launch(headless=True)
-        # Inganniamo i sistemi anti-bot facendogli credere che siamo un vero utente su Mac
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={'width': 1920, 'height': 1080}
         )
         page = context.new_page()
 
-        # 1. Andiamo sul calendario FIS forzando tutta la stagione 2026 (Trucco 'X-2026')
-        print("🌍 Mi collego al calendario FIS (Stagione 2026 intera)...")
-        page.goto("https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026&seasonmonth=X-2026", timeout=60000)
-        
-        # Gestione Popup Cookie (se appare, lo chiudiamo)
-        if page.locator("#onetrust-accept-btn-handler").count() > 0:
-            page.locator("#onetrust-accept-btn-handler").click()
-            time.sleep(1)
-
-        print("⏳ Aspetto che la tabella dinamica si carichi...")
-        # Aspettiamo esplicitamente che compaia almeno un link di gara prima di procedere
-        try:
-            page.wait_for_selector("a[href*='raceid=']", timeout=15000)
-        except:
-            print("⚠️ Nessuna gara apparsa dopo 15 secondi. Il calendario potrebbe essere vuoto o il sito ha bloccato la vista.")
-
-        # 2. Raccogliamo i link delle gare
-        link_elementi = page.locator("a[href*='raceid=']")
-        numero_link = link_elementi.count()
-        
-        url_gare_trovate = set()
-        for i in range(numero_link):
-            href = link_elementi.nth(i).get_attribute("href")
-            if href:
-                url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
-                url_gare_trovate.add(url_completo)
-        
-        print(f"🎯 Trovate {len(url_gare_trovate)} gare nel calendario.")
-
-        # 3. Analizziamo le singole gare e le salviamo su Supabase
-        totale_salvati = 0
-        for url in url_gare_trovate:
-            risultati = estrai_dati_gara(page, url)
+        for mese in mesi_da_cercare:
+            print(f"\n🌍 Mi collego al calendario FIS (Mese: {mese})...")
+            # seasoncode=2026 copre l'intera stagione agonistica, seasonmonth filtra il mese specifico
+            url_mese = f"https://www.fis-ski.com/DB/cross-country/calendar-results.html?sectorcode=CC&seasoncode=2026&seasonmonth={mese}"
             
-            if risultati:
-                try:
-                    # Upsert salva senza duplicare chi c'è già
-                    supabase.table("Risultati_Fis").upsert(risultati).execute()
-                    totale_salvati += len(risultati)
-                    print(f"   ✅ Salvati {len(risultati)} atleti.")
-                except Exception as e:
-                    print(f"   ❌ Errore durante il salvataggio su Supabase: {e}")
-            
-            time.sleep(2) # Pausa di cortesia per non farsi bloccare dal server FIS
+            try:
+                page.goto(url_mese, timeout=60000)
+                time.sleep(3)
+                
+                # Gestione Cookie
+                if page.locator("#onetrust-accept-btn-handler").count() > 0:
+                    page.locator("#onetrust-accept-btn-handler").click()
+                    time.sleep(1)
+
+                print("⏳ Faccio scroll verso il basso per ingannare il sito...")
+                # Scrolliamo la pagina un paio di volte simulando un utente umano per far caricare i link
+                for _ in range(5):
+                    page.evaluate("window.scrollBy(0, 1000)")
+                    time.sleep(1)
+
+                print("⏳ Aspetto i link delle gare (Pazienza 30s)...")
+                page.wait_for_selector("a[href*='raceid=']", timeout=30000)
+
+                # Raccogliamo i link
+                link_elementi = page.locator("a[href*='raceid=']")
+                numero_link = link_elementi.count()
+                
+                url_gare_trovate = set()
+                for i in range(numero_link):
+                    href = link_elementi.nth(i).get_attribute("href")
+                    if href:
+                        url_completo = href if href.startswith("http") else f"https://www.fis-ski.com{href}"
+                        url_gare_trovate.add(url_completo)
+                
+                print(f"🎯 Trovate {len(url_gare_trovate)} gare nel mese {mese}.")
+
+                # Analizziamo le singole gare
+                for url in url_gare_trovate:
+                    risultati = estrai_dati_gara(page, url)
+                    if risultati:
+                        try:
+                            supabase.table("Risultati_Fis").upsert(risultati).execute()
+                            totale_salvati += len(risultati)
+                            print(f"   ✅ Salvati {len(risultati)} atleti.")
+                        except Exception as e:
+                            print(f"   ❌ Errore Supabase: {e}")
+                    time.sleep(2)
+
+            except Exception as e:
+                print(f"⚠️ Nessuna gara trovata per {mese} o la pagina ci ha bloccato. Passo al mese successivo.")
 
         browser.close()
         print(f"\n🏆 SCRAPING COMPLETATO! Totale atleti aggiornati: {totale_salvati}", flush=True)
