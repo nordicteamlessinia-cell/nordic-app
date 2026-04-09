@@ -11,7 +11,7 @@ def intercetta_traffico_api():
     with sync_playwright() as p:
         # Usiamo headless=False così vedi se c'è un blocco cookie o Cloudflare
         # CORRETTO (per GitHub Actions)
-browser = p.chromium.launch(headless=True)
+         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
