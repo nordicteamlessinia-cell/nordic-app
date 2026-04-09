@@ -1,68 +1,85 @@
+import os
+import time
 import requests
 from bs4 import BeautifulSoup
-import time
+from supabase import create_client
 
-def estrai_classifica_veloce(raceid):
+# 🟢 INIZIALIZZAZIONE SUPABASE
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ ERRORE: Variabili di ambiente Supabase mancanti!")
+    exit(1)
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def estrai_e_salva_gara(raceid):
     url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={raceid}"
-    
-    # Headers finti per non farsi bloccare come bot
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
     }
 
-    print(f"🚀 Scarico i dati della gara {raceid} in modalità ultra-veloce...")
-    
-    start_time = time.time()
+    print(f"🚀 Elaborazione gara FIS {raceid}...")
     response = requests.get(url, headers=headers)
     
     if response.status_code != 200:
         print(f"❌ Errore di connessione: {response.status_code}")
         return
 
-    # Usiamo BeautifulSoup per analizzare l'HTML che è già "cotto" dal server
     soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Cerchiamo tutte le righe della tabella (la FIS usa il tag 'a' con classe 'table-row')
     righe_atleti = soup.find_all("a", class_="table-row")
     
-    print(f"✅ Pagina scaricata in {round(time.time() - start_time, 2)} secondi!")
-    print(f"🎯 Trovati {len(righe_atleti)} atleti in classifica.\n")
-    print("-" * 50)
+    if not righe_atleti:
+        print("⚠️ Nessun atleta trovato. La classifica potrebbe non essere ancora disponibile.")
+        return
 
-    risultati = []
+    risultati_da_salvare = []
 
     for riga in righe_atleti:
         try:
-            # Estraiamo i dati usando i selettori CSS (molto più stabili)
             nome_tag = riga.find("div", class_="athlete-name")
             nazione_tag = riga.find("span", class_="country__name-short")
             
-            # PuliAMO i testi da spazi extra e ritorni a capo
             nome = nome_tag.text.strip() if nome_tag else "N/D"
             nazione = nazione_tag.text.strip() if nazione_tag else "N/D"
             
-            # Sulla FIS, i div dentro la riga seguono un ordine preciso.
-            # Estraiamo tutti i testi delle colonne per non sbagliare.
+            # Estraiamo le colonne per prendere posizione, codice FIS, ecc.
             colonne = [col.text.strip() for col in riga.find_all("div") if col.text.strip()]
             
-            # Solitamente la posizione è il primo elemento o il secondo
-            posizione = colonne[0] if colonne else "N/D"
+            # ATTENZIONE: adatta questi indici in base a come sono strutturate le colonne su FIS
+            posizione = colonne[0] if len(colonne) > 0 else "N/D"
+            codice_fis = colonne[1] if len(colonne) > 1 else "N/D" 
+            tempo = colonne[-2] if len(colonne) > 2 else "N/D" # Spesso è la penultima colonna
+            punti = colonne[-1] if len(colonne) > 2 else "0.00" # Spesso è l'ultima colonna
             
-            print(f"⛷️ Pos: {posizione} | Atleta: {nome} ({nazione})")
-            
-            risultati.append({
+            # Creiamo il record formattato per Supabase
+            record = {
+                "id_gara_fis": str(raceid),
                 "posizione": posizione,
-                "nome": nome,
-                "nazione": nazione
-            })
+                "codice_fis": codice_fis,
+                "atleta_nome": nome,
+                "nazione": nazione,
+                "tempo": tempo,
+                "punti_fis": punti,
+                # Aggiungi qui altre colonne (es. data_gara) se le estrai dalla pagina
+                "comitato": "FIS"
+            }
+            risultati_da_salvare.append(record)
             
         except Exception as e:
             continue
-            
-    print("-" * 50)
-    print("🏆 Estrazione completata con successo, pronta per Supabase!")
+
+    print(f"🎯 Pronti da salvare: {len(risultati_da_salvare)} atleti.")
+
+    # 🟢 SALVATAGGIO SU SUPABASE
+    if risultati_da_salvare:
+        try:
+            # Upsert usa la chiave primaria per aggiornare i record esistenti o crearne di nuovi
+            res = supabase.table("Risultati_Fis").upsert(risultati_da_salvare).execute()
+            print(f"✅ Operazione Supabase completata con successo!")
+        except Exception as e:
+            print(f"❌ Errore durante il salvataggio su Supabase: {e}")
 
 if __name__ == "__main__":
-    estrai_classifica_veloce(50468)
+    estrai_e_salva_gara(50468)
