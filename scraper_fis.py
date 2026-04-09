@@ -1,68 +1,68 @@
-from playwright.sync_api import sync_playwright
-import json
+import requests
+from bs4 import BeautifulSoup
+import time
 
-# Il nostro target specifico
-URL_GARA = "https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid=50468"
+def estrai_classifica_veloce(raceid):
+    url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={raceid}"
+    
+    # Headers finti per non farsi bloccare come bot
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
 
-def intercetta_traffico_api():
-    print("🕵️ Avvio radar di rete per la gara 50468...")
-    print("In attesa delle chiamate API in background...\n")
+    print(f"🚀 Scarico i dati della gara {raceid} in modalità ultra-veloce...")
+    
+    start_time = time.time()
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        print(f"❌ Errore di connessione: {response.status_code}")
+        return
 
-    with sync_playwright() as p:
-        # headless=True per funzionare su GitHub Actions senza crashare
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
+    # Usiamo BeautifulSoup per analizzare l'HTML che è già "cotto" dal server
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Cerchiamo tutte le righe della tabella (la FIS usa il tag 'a' con classe 'table-row')
+    righe_atleti = soup.find_all("a", class_="table-row")
+    
+    print(f"✅ Pagina scaricata in {round(time.time() - start_time, 2)} secondi!")
+    print(f"🎯 Trovati {len(righe_atleti)} atleti in classifica.\n")
+    print("-" * 50)
 
-        # Funzione che scansiona ogni singola risposta di rete
-        def analizza_risposta(response):
-            if response.status == 200:
-                content_type = response.headers.get("content-type", "")
-                
-                if "json" in content_type.lower():
-                    url = response.url
-                    
-                    if "50468" in url or "api" in url.lower() or "results" in url.lower():
-                        print("=" * 60)
-                        print("🚨 TROVATO POSSIBILE ENDPOINT API! 🚨")
-                        print(f"🔗 URL: {url}")
-                        
-                        try:
-                            dati = response.json()
-                            print(f"📦 Tipo di dato: {type(dati)}")
-                            
-                            if isinstance(dati, dict):
-                                print(f"🔑 Chiavi principali: {list(dati.keys())}")
-                                print("\n📄 Anteprima primi 300 caratteri:")
-                                print(json.dumps(dati, indent=2)[:300] + "\n...")
-                            elif isinstance(dati, list):
-                                print(f"🔢 È una lista di {len(dati)} elementi.")
-                                if len(dati) > 0:
-                                    print("\n📄 Anteprima primo elemento:")
-                                    print(json.dumps(dati[0], indent=2)[:300] + "\n...")
-                        except Exception as e:
-                            print(f"⚠️ Impossibile leggere il JSON: {e}")
-                        print("=" * 60 + "\n")
+    risultati = []
 
-        # Agganciamo il nostro "ascoltatore" alla pagina
-        page.on("response", analizza_risposta)
-        
-        # Navighiamo verso la pagina
+    for riga in righe_atleti:
         try:
-            page.goto(URL_GARA, wait_until="domcontentloaded", timeout=60000)
+            # Estraiamo i dati usando i selettori CSS (molto più stabili)
+            nome_tag = riga.find("div", class_="athlete-name")
+            nazione_tag = riga.find("span", class_="country__name-short")
             
-            page.wait_for_timeout(3000)
-            for _ in range(3):
-                page.mouse.wheel(0, 1500)
-                page.wait_for_timeout(1000)
-                
+            # PuliAMO i testi da spazi extra e ritorni a capo
+            nome = nome_tag.text.strip() if nome_tag else "N/D"
+            nazione = nazione_tag.text.strip() if nazione_tag else "N/D"
+            
+            # Sulla FIS, i div dentro la riga seguono un ordine preciso.
+            # Estraiamo tutti i testi delle colonne per non sbagliare.
+            colonne = [col.text.strip() for col in riga.find_all("div") if col.text.strip()]
+            
+            # Solitamente la posizione è il primo elemento o il secondo
+            posizione = colonne[0] if colonne else "N/D"
+            
+            print(f"⛷️ Pos: {posizione} | Atleta: {nome} ({nazione})")
+            
+            risultati.append({
+                "posizione": posizione,
+                "nome": nome,
+                "nazione": nazione
+            })
+            
         except Exception as e:
-            print(f"Errore di navigazione: {e}")
-
-        browser.close()
-        print("🛑 Scansione terminata.")
+            continue
+            
+    print("-" * 50)
+    print("🏆 Estrazione completata con successo, pronta per Supabase!")
 
 if __name__ == "__main__":
-    intercetta_traffico_api()
+    estrai_classifica_veloce(50468)
