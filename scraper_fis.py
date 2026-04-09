@@ -1,85 +1,75 @@
-import os
-import time
 from playwright.sync_api import sync_playwright
+import json
 
-def auto_scroll(page):
-    """Scorre la pagina fino in fondo per attivare il lazy loading della FIS"""
-    previous_height = page.evaluate("document.body.scrollHeight")
-    while True:
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(2000) # Attesa per il rendering del nuovo chunk
-        new_height = page.evaluate("document.body.scrollHeight")
-        if new_height == previous_height:
-            break
-        previous_height = new_height
+# Il nostro target specifico
+URL_GARA = "https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid=50468"
 
-def avvia_scraper_fis_pro():
+def intercetta_traffico_api():
+    print(f"🕵️ Avvio radar di rete per la gara 50468...")
+    print("In attesa delle chiamate API in background...\n")
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+        # Usiamo headless=False così vedi se c'è un blocco cookie o Cloudflare
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
-        # URL OTTIMIZZATO: Filtro Cross-Country + Nazione Italia + Risultati presenti
-        url_ita = (
-            "https://www.fis-ski.com/DB/cross-country/calendar-results.html?"
-            "eventselection=actualresults&sectorcode=CC&nationcode=ITA&"
-            "racedatetype=onp&include_at_least_one_results=true"
-        )
+        # Funzione che scansiona ogni singola risposta di rete
+        def analizza_risposta(response):
+            # Vogliamo solo le risposte con successo (200) e che contengono JSON
+            if response.status == 200:
+                content_type = response.headers.get("content-type", "")
+                
+                # Molte API restituiscono application/json, a volte text/plain
+                if "json" in content_type.lower():
+                    url = response.url
+                    
+                    # Filtriamo via roba inutile (tracciamenti, analytics, ecc.)
+                    # Ci interessano le chiamate che contengono il raceid o parole chiave della FIS
+                    if "50468" in url or "api" in url.lower() or "results" in url.lower():
+                        print("=" * 60)
+                        print(f"🚨 TROVATO POSSIBILE ENDPOINT API! 🚨")
+                        print(f"🔗 URL: {url}")
+                        
+                        try:
+                            # Estraiamo il body in JSON
+                            dati = response.json()
+                            print(f"📦 Tipo di dato: {type(dati)}")
+                            
+                            # Stampiamo le chiavi principali o un'anteprima
+                            if isinstance(dati, dict):
+                                print(f"🔑 Chiavi principali: {list(dati.keys())}")
+                                print("\n📄 Anteprima primi 300 caratteri:")
+                                print(json.dumps(dati, indent=2)[:300] + "\n...")
+                            elif isinstance(dati, list):
+                                print(f"🔢 È una lista di {len(dati)} elementi.")
+                                if len(dati) > 0:
+                                    print("\n📄 Anteprima primo elemento:")
+                                    print(json.dumps(dati[0], indent=2)[:300] + "\n...")
+                        except Exception as e:
+                            print(f"⚠️ Impossibile leggere il JSON: {e}")
+                        print("=" * 60 + "\n")
 
-        print(f"🌍 Navigo su: {url_ita}")
-        page.goto(url_ita, wait_until="domcontentloaded")
+        # Agganciamo il nostro "ascoltatore" alla pagina
+        page.on("response", analizza_risposta)
         
-        # Aspettiamo che la tabella principale sia caricata
+        # Navighiamo verso la pagina
         try:
-            page.wait_for_selector(".table-row", timeout=20000)
-        except:
-            print("❌ Nessuna gara trovata con questi filtri.")
-            return
-
-        # 1. Carichiamo tutti i link (Lazy Loading)
-        auto_scroll(page)
-
-        # 2. Estrazione Link Univoci
-        # Usiamo un selettore più preciso: l'anchor che contiene il raceid
-        gare_links = page.eval_on_selector_all(
-            "a[href*='raceid=']", 
-            "elements => elements.map(e => e.href)"
-        )
-        
-        # Pulizia duplicati (la FIS spesso mette il link sia sulla riga che sulla freccia)
-        url_unici = list(dict.fromkeys(gare_links))
-        print(f"🎯 Gare Italiane trovate: {len(url_unici)}")
-
-        for url in url_unici:
-            processa_classifica_gara(page, url)
+            page.goto(URL_GARA, wait_until="domcontentloaded", timeout=60000)
+            
+            # Simuliamo l'interazione per far triggerare il caricamento dei risultati
+            page.wait_for_timeout(3000)
+            for _ in range(3):
+                page.mouse.wheel(0, 1500)
+                page.wait_for_timeout(1000)
+                
+        except Exception as e:
+            print(f"Errore di navigazione: {e}")
 
         browser.close()
-
-def processa_classifica_gara(page, url):
-    """Logica di estrazione dei singoli atleti con selettori robusti"""
-    page.goto(url, wait_until="domcontentloaded")
-    
-    # Aspettiamo che il loader sparisca (fondamentale su FIS-ski)
-    page.wait_for_selector(".table-row", timeout=15000)
-    
-    # Esempio di estrazione "robusta" senza classi numeriche
-    rows = page.locator(".table-row")
-    for i in range(rows.count()):
-        row = rows.nth(i)
-        
-        # Estraiamo i dati usando la posizione relativa (più stabile delle classi .g-lg-X)
-        try:
-            # Il nome dell'atleta è l'unico con classe .athlete-name
-            nome = row.locator(".athlete-name").inner_text().strip()
-            # La nazione è sempre dentro .country__name-short
-            nazione = row.locator(".country__name-short").inner_text().strip()
-            # Il tempo è solitamente l'ultimo elemento prima dei punti
-            # Usiamo filtri CSS intelligenti o regex se necessario
-            
-            print(f"   ⛷️ Atleta: {nome} ({nazione})")
-            # Qui andrebbe il salvataggio su Supabase...
-        except:
-            continue
+        print("🛑 Scansione terminata.")
 
 if __name__ == "__main__":
-    avvia_scraper_fis_pro()
+    intercetta_traffico_api()
