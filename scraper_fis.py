@@ -5,7 +5,6 @@ import datetime
 import re
 from bs4 import BeautifulSoup
 from supabase import create_client
-from playwright.sync_api import sync_playwright
 
 # ==========================================
 # 🟢 1. CONFIGURAZIONE SUPABASE
@@ -39,74 +38,73 @@ def formatta_data_fis(testo_data):
     return datetime.datetime.now().strftime("%Y-%m-%d")
 
 # ==========================================
-# 🗺️ 3. RICOGNITORE (Playwright) - Legge il calendario dinamico
+# 🗺️ 3. RICOGNITORE (Requests Puro) - Trova gli ID delle gare
 # ==========================================
-def recupera_ultime_gare(limite_gare=15):
-    """Apre il calendario, gestisce i cookie ed estrae i link usando selettori robusti"""
-    print(f"🌍 Avvio il Ricognitore (browser fantasma) per leggere il calendario dinamico...")
-    url_calendario = "https://www.fis-ski.com/DB/cross-country/calendar-results.html?eventselection=actualresults&sectorcode=CC&racedatetype=onp&include_at_least_one_results=true"
+def recupera_ultime_gare(limite_gare=50):
+    """Scarica il codice della pagina calendario ITA 2026 ed estrae i raceid"""
+    print(f"🌍 Avvio il Ricognitore Veloce (Italia, Stagione 2026)...")
     
-    race_ids = []
+    # L'URL chirurgico con il filtro per l'Italia e per le gare concluse
+    url_calendario = (
+        "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
+        "?eventselection=&place=&sectorcode=CC&seasoncode=2026&categorycode="
+        "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
+        "&seasonmonth=X-2026&saveselection=-1&seasonselection="
+        "&include_at_least_one_results=true"
+    )
+    
+    # Usiamo una Sessione per mantenere eventuali cookie e sembrare più umani
+    session = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
     
     try:
-        with sync_playwright() as p:
-            # headless=True è perfetto per server/GitHub Actions
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            page = context.new_page()
-            
-            page.goto(url_calendario, wait_until="domcontentloaded", timeout=60000)
-            
-            # 🛡️ Chiudiamo il banner dei cookie se appare (spesso blocca il sito)
-            try:
-                page.click("#onetrust-accept-btn-handler", timeout=3000)
-                print("🍪 Cookie accettati.")
-            except:
-                pass # Se non c'è, andiamo avanti tranquilli
-
-            # 🎯 Il nuovo selettore infallibile: cerchiamo QUALSIASI link che contenga "raceid="
-            print("⏳ Attendo il caricamento della griglia del calendario...")
-            page.wait_for_selector("a[href*='raceid=']", timeout=20000)
-            
-            # Scrolliamo leggermente per far "svegliare" i link fuori dallo schermo (lazy loading)
-            for _ in range(3):
-                page.mouse.wheel(0, 1500)
-                page.wait_for_timeout(1000)
-                
-            # Estraiamo tutti i link (href) trovati
-            links = page.eval_on_selector_all("a[href*='raceid=']", "elements => elements.map(e => e.href)")
-            
-            for link in links:
-                # Estraiamo solo il numero dell'ID tramite espressione regolare
-                match = re.search(r'raceid=(\d+)', link, re.IGNORECASE)
-                if match:
-                    rid = match.group(1)
-                    # Aggiungiamo alla lista solo se non c'è già, per evitare duplicati
-                    if rid not in race_ids:
-                        race_ids.append(rid)
-                        
-            browser.close()
-    except Exception as e:
-        print(f"❌ Errore durante l'esplorazione del calendario: {e}")
+        print("⏳ Scarico i dati del calendario...")
+        response = session.get(url_calendario, headers=headers, timeout=30)
         
-    # Tagliamo la lista al limite impostato (es. le ultime 15 gare)
-    race_ids_finali = race_ids[:limite_gare]
-    print(f"🎯 Missione compiuta! Trovati {len(race_ids_finali)} ID gara univoci: {race_ids_finali}\n")
-    return race_ids_finali
+        if response.status_code != 200:
+            print(f"❌ Errore API Calendario: HTTP {response.status_code}")
+            return []
+
+        # Scansioniamo TUTTO il codice sorgente (anche il JS nascosto) cercando i raceid
+        race_ids_trovati = re.findall(r'raceid=(\d+)', response.text, re.IGNORECASE)
+        
+        if not race_ids_trovati:
+            # Piano B se i link sono formattati in JSON nel sorgente
+            race_ids_trovati = re.findall(r'"raceId"\s*:\s*"?(\d+)"?', response.text, re.IGNORECASE)
+
+        # Pulizia: rimuoviamo i duplicati ma manteniamo l'ordine in cui sono apparsi
+        race_ids_unici = list(dict.fromkeys(race_ids_trovati))
+        race_ids_finali = race_ids_unici[:limite_gare]
+        
+        print(f"🎯 Missione compiuta! Trovati {len(race_ids_finali)} ID gara univoci.")
+        return race_ids_finali
+
+    except Exception as e:
+        print(f"❌ Errore di connessione al calendario: {e}")
+        return []
 
 # ==========================================
 # ⚡ 4. ESTRATTORE VELOCE (Requests) - Analizza le singole gare
 # ==========================================
 def estrai_e_salva_gara(raceid):
-    """Scarica i risultati statici in mezzo secondo e li spara su Supabase"""
+    """Scarica i risultati statici di una gara in mezzo secondo e li spara su Supabase"""
     url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={raceid}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     print(f"🚀 Elaborazione gara {raceid}...")
-    response = requests.get(url, headers=headers)
     
-    if response.status_code != 200:
-        print(f"   ❌ Errore API: HTTP {response.status_code}")
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"   ❌ Errore HTTP {response.status_code}")
+            return
+    except Exception as e:
+        print(f"   ❌ Errore di rete sulla gara {raceid}: {e}")
         return
 
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -121,7 +119,6 @@ def estrai_e_salva_gara(raceid):
         luogo, data_gara, categoria, specialita = "N/D", datetime.datetime.now().strftime("%Y-%m-%d"), "FIS", "Cross-Country"
 
     # --- Estrazione Righe Atleti ---
-    # (Qui usiamo .table-row perché nella pagina dei risultati la classe è corretta)
     righe_atleti = soup.find_all("a", class_="table-row")
     if not righe_atleti:
         print("   ⚠️ Nessun atleta trovato per questa gara.")
@@ -166,7 +163,7 @@ def estrai_e_salva_gara(raceid):
     # --- Salvataggio su Supabase ---
     if risultati_da_salvare:
         try:
-            # Upsert fa in modo di aggiornare record esistenti senza creare duplicati fastidiosi
+            # Upsert fa in modo di aggiornare record esistenti senza creare duplicati
             supabase.table("Risultati_Fis").upsert(risultati_da_salvare).execute()
             print(f"   ✅ Salvati {len(risultati_da_salvare)} atleti: {luogo} | {specialita} | {data_gara}")
         except Exception as e:
@@ -180,8 +177,8 @@ if __name__ == "__main__":
     print("❄️ AVVIO FIS SCRAPER BOT (CROSS-COUNTRY) ❄️")
     print("=========================================\n")
     
-    # 1. Trova le ultime 15 gare finite
-    gare_da_aggiornare = recupera_ultime_gare(limite_gare=15)
+    # 1. Trova le gare. Limite a 50 per prendere un bell'arco temporale
+    gare_da_aggiornare = recupera_ultime_gare(limite_gare=50)
     
     if not gare_da_aggiornare:
         print("Nessuna gara trovata da processare. Termino lo script.")
@@ -190,7 +187,7 @@ if __name__ == "__main__":
     # 2. Per ogni gara trovata, scarica e salva i risultati
     for id_gara in gare_da_aggiornare:
         estrai_e_salva_gara(id_gara)
-        # Una piccolissima pausa (mezzo secondo) per non farsi bannare dal server FIS
-        time.sleep(0.5)
+        # Una pausa (1 secondo) per rispetto verso il server FIS
+        time.sleep(1)
         
     print("\n🏆 Aggiornamento completato con successo! Tutti i dati sono su Supabase.")
