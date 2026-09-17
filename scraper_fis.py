@@ -1,202 +1,188 @@
-import os
-import time
-import requests
 import datetime
+import os
 import re
+import time
+
+import requests
 from bs4 import BeautifulSoup
-from supabase import create_client
 
-# ==========================================
-# 🟢 1. CONFIGURAZIONI PRINCIPALI
-# ==========================================
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+from db import fis_race_has_results, upsert_risultati_fis
 
-# 🎛️ INTERRUTTORE MAGICO: 
-# True = Salva solo atleti ITA (da gare di tutto il mondo)
-# False = Salva tutti gli atleti di tutto il mondo
-SALVA_SOLO_ITALIANI = False 
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ ERRORE CRITICO: Variabili di ambiente Supabase mancanti!")
-    exit(1)
+SAVE_ONLY_ITALIANS = os.getenv("FIS_ONLY_ITALIANS", "0") == "1"
+FORCE_REFRESH = os.getenv("FIS_FORCE_REFRESH", "0") == "1"
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"
+}
 
-# ==========================================
-# 🛠️ 2. FUNZIONI DI SUPPORTO
-# ==========================================
-def formatta_data_fis(testo_data):
-    if not testo_data or testo_data == "N/D":
-        return datetime.datetime.now().strftime("%Y-%m-%d")
-    try:
-        clean_date = testo_data.split('\n')[0].strip()
-        for fmt in ("%B %d, %Y", "%d %b %Y", "%d.%m.%Y", "%Y-%m-%d"):
-            try:
-                return datetime.datetime.strptime(clean_date, fmt).strftime("%Y-%m-%d")
-            except:
-                continue
-    except:
-        pass
-    return datetime.datetime.now().strftime("%Y-%m-%d")
 
-# ==========================================
-# 🗺️ 3. RICOGNITORE MENSILE (Bypassa l'impaginazione)
-# ==========================================
-def recupera_tutti_gli_eventi():
-    """Scansiona il calendario MESE per MESE per non farsi tagliare fuori dall'impaginazione"""
-    print(f"🌍 Fase 1: Scansione completa del calendario Mondiale 2026 (Mese per Mese)...")
-    
-    # Mesi tipici della stagione invernale FIS
-    mesi_stagione = ["10-2025", "11-2025", "12-2025", "01-2026", "02-2026", "03-2026", "04-2026"]
-    tutti_gli_eventi = []
-    
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+def current_fis_season():
+    now = datetime.datetime.now()
+    return now.year + 1 if now.month >= 7 else now.year
 
-    for mese in mesi_stagione:
-        print(f"   📅 Esploro il mese: {mese}...")
-        url_calendario = (
-            f"https://www.fis-ski.com/DB/cross-country/calendar-results.html"
-            f"?eventselection=&place=&sectorcode=CC&seasoncode=2026&categorycode="
-            f"&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode="
-            f"&seasonmonth={mese}&saveselection=-1&seasonselection="
-            f"&include_at_least_one_results=true"
-        )
-        
+
+def seasons_to_scan():
+    explicit = os.getenv("FIS_SEASONS", "").strip()
+    if explicit:
+        return [int(x.strip()) for x in explicit.split(",") if x.strip()]
+
+    current = current_fis_season()
+    if os.getenv("FIS_FULL_HISTORY", "0") == "1":
+        start = int(os.getenv("FIS_START_SEASON", "2010"))
+        return list(range(start, current + 1))
+
+    return [current]
+
+
+def season_months(season):
+    previous = season - 1
+    return [
+        f"10-{previous}", f"11-{previous}", f"12-{previous}",
+        f"01-{season}", f"02-{season}", f"03-{season}", f"04-{season}",
+    ]
+
+
+def format_fis_date(text):
+    if not text or text == "N/D":
+        return "N/D"
+
+    clean = text.split("\n")[0].strip()
+    for fmt in ("%B %d, %Y", "%d %b %Y", "%d.%m.%Y", "%Y-%m-%d"):
         try:
-            response = requests.get(url_calendario, headers=headers, timeout=30)
-            if response.status_code == 200:
-                # Troviamo gli eventi di questo mese
-                event_ids = re.findall(r'eventid=(\d+)', response.text, re.IGNORECASE)
-                for eid in event_ids:
-                    if eid not in tutti_gli_eventi:
-                        tutti_gli_eventi.append(eid)
-            time.sleep(0.5) # Pausa gentile tra un mese e l'altro
-        except Exception as e:
-            print(f"   ❌ Errore nel mese {mese}: {e}")
-            
-    print(f"🎯 Finito! Trovati in totale {len(tutti_gli_eventi)} Eventi unici per la stagione.\n")
-    return tutti_gli_eventi
+            return datetime.datetime.strptime(clean, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return clean
 
-def recupera_gare_da_evento(eventid):
-    """Apre la pagina dell'evento e trova tutte le singole GARE (raceid) al suo interno"""
-    url_evento = f"https://www.fis-ski.com/DB/general/event-details.html?sectorcode=CC&eventid={eventid}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
+
+def fetch_events(season):
+    print(f"🌍 FIS: scansione stagione {season}", flush=True)
+    event_ids = []
+
+    for month in season_months(season):
+        url = (
+            "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
+            f"?eventselection=&place=&sectorcode=CC&seasoncode={season}&categorycode="
+            "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode="
+            f"&seasonmonth={month}&saveselection=-1&seasonselection="
+            "&include_at_least_one_results=true"
+        )
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=30)
+            response.raise_for_status()
+            for event_id in re.findall(r"eventid=(\d+)", response.text, re.IGNORECASE):
+                if event_id not in event_ids:
+                    event_ids.append(event_id)
+        except Exception as exc:
+            print(f"⚠️ FIS mese {month}: {exc}", flush=True)
+        time.sleep(0.4)
+
+    print(f"   Trovati {len(event_ids)} eventi FIS", flush=True)
+    return event_ids
+
+
+def fetch_races(event_id):
+    url = f"https://www.fis-ski.com/DB/general/event-details.html?sectorcode=CC&eventid={event_id}"
     try:
-        response = requests.get(url_evento, headers=headers, timeout=30)
-        if response.status_code != 200:
-            return []
-            
-        race_ids = re.findall(r'raceid=(\d+)', response.text, re.IGNORECASE)
-        # Rimuove i duplicati mantenendo l'ordine
-        return list(dict.fromkeys(race_ids))
-    except Exception:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        return list(dict.fromkeys(re.findall(r"raceid=(\d+)", response.text, re.IGNORECASE)))
+    except Exception as exc:
+        print(f"⚠️ Evento FIS {event_id}: {exc}", flush=True)
         return []
 
-# ==========================================
-# ⚡ 4. ESTRATTORE VELOCE RISULTATI
-# ==========================================
-def estrai_e_salva_gara(raceid):
-    """Estrae i risultati della gara e li salva su Supabase filtrando per nazione se richiesto"""
-    url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={raceid}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+def scrape_race(race_id):
+    if not FORCE_REFRESH and fis_race_has_results(race_id):
+        return 0
+
+    url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={race_id}"
     try:
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code != 200:
-            return
-    except Exception:
-        return
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+    except Exception as exc:
+        print(f"⚠️ Gara FIS {race_id}: {exc}", flush=True)
+        return 0
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Intestazione
-    try:
-        luogo = soup.select_one(".event-header__name h1").text.strip() if soup.select_one(".event-header__name h1") else "N/D"
-        data_gara = formatta_data_fis(soup.select_one(".date__full").text.strip() if soup.select_one(".date__full") else "N/D")
-        categoria = soup.select_one(".event-header__kind").text.strip() if soup.select_one(".event-header__kind") else "FIS"
-        specialita = soup.select_one(".event-header__subtitle").text.strip() if soup.select_one(".event-header__subtitle") else "Cross-Country"
-    except Exception:
-        luogo, data_gara, categoria, specialita = "N/D", datetime.datetime.now().strftime("%Y-%m-%d"), "FIS", "Cross-Country"
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    righe_atleti = soup.find_all("a", class_="table-row")
-    if not righe_atleti:
-        return
+    place_node = soup.select_one(".event-header__name h1")
+    date_node = soup.select_one(".date__full")
+    category_node = soup.select_one(".event-header__kind")
+    speciality_node = soup.select_one(".event-header__subtitle")
 
-    risultati_da_salvare = []
+    place = place_node.text.strip() if place_node else "N/D"
+    race_date = format_fis_date(date_node.text.strip() if date_node else "N/D")
+    category = category_node.text.strip() if category_node else "FIS"
+    speciality = speciality_node.text.strip() if speciality_node else "Cross-Country"
+    race_name = f"{place} - {speciality}" if speciality and speciality != "N/D" else place
 
-    for riga in righe_atleti:
+    athlete_rows = soup.find_all("a", class_="table-row")
+    if not athlete_rows:
+        return 0
+
+    results = []
+    for row in athlete_rows:
         try:
-            nome_tag = riga.find("div", class_="athlete-name")
-            nome = nome_tag.text.strip() if nome_tag else "N/D"
-            nazione_tag = riga.find("span", class_="country__name-short")
-            nazione = nazione_tag.text.strip() if nazione_tag else "N/D"
-            
-            # 🛡️ FILTRO NAZIONALITA'
-            if SALVA_SOLO_ITALIANI and nazione != "ITA":
+            name_node = row.find("div", class_="athlete-name")
+            name = name_node.text.strip() if name_node else "N/D"
+            if name == "N/D":
                 continue
-            
-            colonne = [col.text.strip() for col in riga.find_all("div") if col.text.strip()]
-            
-            posizione = colonne[0] if len(colonne) > 0 else "N/D"
-            codice_fis = colonne[1] if len(colonne) > 1 else "N/D" 
-            tempo = colonne[-2] if len(colonne) > 2 else "N/D"
-            punti = colonne[-1] if len(colonne) > 2 else "0.00"
-            
-            record = {
-                "id_gara_fis": str(raceid),
-                "luogo": luogo,
-                "data_gara": data_gara,
-                "categoria": categoria,
-                "specialita": specialita,
-                "posizione": posizione,
-                "codice_fis": codice_fis,
-                "atleta_nome": nome,
-                "nazione": nazione,
-                "tempo": tempo,
-                "punti_fis": punti,
-                "comitato": "FIS"
-            }
-            risultati_da_salvare.append(record)
+
+            nation_node = row.find("span", class_="country__name-short")
+            nation = nation_node.text.strip() if nation_node else "N/D"
+            if SAVE_ONLY_ITALIANS and nation != "ITA":
+                continue
+
+            columns = [col.text.strip() for col in row.find_all("div") if col.text.strip()]
+            position = columns[0] if len(columns) > 0 else "N/D"
+            fis_code = columns[1] if len(columns) > 1 else ""
+            result_time = columns[-2] if len(columns) > 2 else "N/D"
+            fis_points = columns[-1] if len(columns) > 2 else ""
+
+            results.append({
+                "id_gara_fis": str(race_id),
+                "atleta_nome": name,
+                "codice_fis": fis_code,
+                "nazione": nation,
+                "societa": "N/D",
+                "comitato": "FIS",
+                "categoria": category,
+                "specialita": speciality,
+                "posizione": position,
+                "tempo": result_time,
+                "punti_fis": fis_points,
+                "gara_nome": race_name,
+                "luogo": place,
+                "data_gara": race_date,
+            })
         except Exception:
             continue
 
-    if risultati_da_salvare:
-        try:
-            supabase.table("Risultati_Fis").upsert(risultati_da_salvare).execute()
-            print(f"      ✅ Salvati {len(risultati_da_salvare)} atleti: {luogo} | {specialita}")
-        except Exception as e:
-            print(f"      ❌ Errore Supabase: {e}")
+    if not results:
+        return 0
 
-# ==========================================
-# 🏁 5. AVVIO DELLO SCRIPT
-# ==========================================
-if __name__ == "__main__":
+    saved = upsert_risultati_fis(results)
+    print(f"   ✅ FIS race {race_id}: {saved} risultati | {race_name}", flush=True)
+    return saved
+
+
+def main():
     print("=========================================")
-    print("❄️ AVVIO FIS SCRAPER BOT (CROSS-COUNTRY) ❄️")
-    print("=========================================\n")
-    
-    # 1. Trova TUTTI gli eventi della stagione divisa per mesi
-    eventi_da_analizzare = recupera_tutti_gli_eventi()
-    
-    if not eventi_da_analizzare:
-        print("Nessun evento trovato da processare. Termino lo script.")
-        exit(0)
+    print("❄️ NORDIC HUB - SCRAPER FIS / COCKROACHDB")
+    print("=========================================")
 
-    # 2. Per ogni evento, trova le gare e scaricale
-    for id_evento in eventi_da_analizzare:
-        print(f"\n🎿 Esploro l'evento {id_evento}...")
-        gare_dell_evento = recupera_gare_da_evento(id_evento)
-        
-        if gare_dell_evento:
-            print(f"   Trovate {len(gare_dell_evento)} gare. Inizio download...")
-            for id_gara in gare_dell_evento:
-                estrai_e_salva_gara(id_gara)
-                time.sleep(0.3) # Piccola pausa per non stressare la FIS
-        else:
-            print("   Nessuna gara con risultati trovata in questo evento.")
-            
-        time.sleep(0.5) 
-        
-    print("\n🏆 Aggiornamento completato con successo! Tutti i dati sono su Supabase.")
+    total = 0
+    for season in seasons_to_scan():
+        for event_id in fetch_events(season):
+            for race_id in fetch_races(event_id):
+                total += scrape_race(race_id)
+                time.sleep(0.25)
+            time.sleep(0.3)
+
+    print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
+
+
+if __name__ == "__main__":
+    main()
