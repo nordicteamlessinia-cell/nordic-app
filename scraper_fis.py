@@ -8,26 +8,14 @@ from bs4 import BeautifulSoup
 
 from db import fis_race_has_results, upsert_risultati_fis
 
-
 SAVE_ONLY_ITALIANS = os.getenv("FIS_ONLY_ITALIANS", "0") == "1"
 FORCE_REFRESH = os.getenv("FIS_FORCE_REFRESH", "0") == "1"
 MAX_RACES = int(os.getenv("FIS_MAX_RACES", "0") or "0")
 TEST_RACE_ID = os.getenv("FIS_TEST_RACE_ID", "").strip()
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"}
 
-SKI_BRANDS = {
-    "atomic",
-    "fischer",
-    "madshus",
-    "rossignol",
-    "salomon",
-    "peltonen",
-    "kastle",
-    "kaestle",
-}
+SKI_BRANDS = {"atomic", "fischer", "madshus", "rossignol", "salomon", "peltonen", "kastle", "kaestle"}
 
 
 def current_fis_season():
@@ -39,27 +27,21 @@ def seasons_to_scan():
     explicit = os.getenv("FIS_SEASONS", "").strip()
     if explicit:
         return [int(x.strip()) for x in explicit.split(",") if x.strip()]
-
     current = current_fis_season()
     if os.getenv("FIS_FULL_HISTORY", "0") == "1":
         start = int(os.getenv("FIS_START_SEASON", "2010"))
         return list(range(start, current + 1))
-
     return [current]
 
 
 def season_months(season):
     previous = season - 1
-    return [
-        f"10-{previous}", f"11-{previous}", f"12-{previous}",
-        f"01-{season}", f"02-{season}", f"03-{season}", f"04-{season}",
-    ]
+    return [f"10-{previous}", f"11-{previous}", f"12-{previous}", f"01-{season}", f"02-{season}", f"03-{season}", f"04-{season}"]
 
 
 def format_fis_date(text):
     if not text or text == "N/D":
         return "N/D"
-
     clean = text.split("\n")[0].strip()
     for fmt in ("%B %d, %Y", "%d %b %Y", "%d.%m.%Y", "%Y-%m-%d"):
         try:
@@ -72,7 +54,6 @@ def format_fis_date(text):
 def fetch_events(season):
     print(f"🌍 FIS: scansione stagione {season}", flush=True)
     event_ids = []
-
     for month in season_months(season):
         url = (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
@@ -90,7 +71,6 @@ def fetch_events(season):
         except Exception as exc:
             print(f"⚠️ FIS mese {month}: {exc}", flush=True)
         time.sleep(0.4)
-
     print(f"   Trovati {len(event_ids)} eventi FIS", flush=True)
     return event_ids
 
@@ -114,44 +94,28 @@ def _strip_ski_brand(name):
 
 
 def parse_result_row(row):
-    """Interpreta una riga risultati FIS con fallback sul testo visibile.
-
-    La FIS ha cambiato più volte le classi HTML. Prima proviamo i selettori
-    storici; se non esistono, analizziamo il testo della riga, per esempio:
-    '1 202 ARTUSI Aksel 2004 ITA 2:14.56 72.08'.
-    """
-    # Vecchia struttura FIS: la manteniamo per compatibilità storica.
     name_node = row.find("div", class_="athlete-name")
     nation_node = row.find("span", class_="country__name-short")
 
     if name_node:
         name = _strip_ski_brand(name_node.get_text(" ", strip=True))
         nation = nation_node.get_text(" ", strip=True) if nation_node else "N/D"
-        columns = [
-            re.sub(r"\s+", " ", col.get_text(" ", strip=True))
-            for col in row.find_all("div")
-            if col.get_text(" ", strip=True)
-        ]
+        columns = [re.sub(r"\s+", " ", col.get_text(" ", strip=True)) for col in row.find_all("div") if col.get_text(" ", strip=True)]
         position = columns[0] if columns else "N/D"
         result_time = columns[-2] if len(columns) > 2 else "N/D"
         fis_points = columns[-1] if len(columns) > 2 else ""
-        return {
-            "name": name,
-            "nation": nation,
-            "position": position,
-            "time": result_time,
-            "points": fis_points,
-            "fis_code": "",
-        }
+        return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": ""}
 
-    # Nuova struttura FIS: parsing del testo completo della riga.
     text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
     if not text:
         return None
 
+    # Current FIS row example:
+    # 1 202 3290935 ARTUSI Aksel 2004 ITA 2:14.56 72.08
     match = re.match(
         r"^(?P<position>\d+|DNS|DNF|DSQ)\s+"
         r"(?P<bib>\d+)\s+"
+        r"(?P<fis_code>\d{6,8})\s+"
         r"(?P<name>.+?)\s+"
         r"(?P<year>(?:19|20)\d{2})\s+"
         r"(?P<nation>[A-Z]{3})"
@@ -159,6 +123,22 @@ def parse_result_row(row):
         text,
         re.IGNORECASE,
     )
+
+    if match:
+        fis_code = match.group("fis_code")
+    else:
+        match = re.match(
+            r"^(?P<position>\d+|DNS|DNF|DSQ)\s+"
+            r"(?P<bib>\d+)\s+"
+            r"(?P<name>.+?)\s+"
+            r"(?P<year>(?:19|20)\d{2})\s+"
+            r"(?P<nation>[A-Z]{3})"
+            r"(?:\s+(?P<rest>.*))?$",
+            text,
+            re.IGNORECASE,
+        )
+        fis_code = ""
+
     if not match:
         return None
 
@@ -177,14 +157,7 @@ def parse_result_row(row):
         else:
             result_time = rest_parts[-1]
 
-    return {
-        "name": name,
-        "nation": nation,
-        "position": position,
-        "time": result_time,
-        "points": fis_points,
-        "fis_code": "",
-    }
+    return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": fis_code}
 
 
 def scrape_race(race_id):
@@ -201,7 +174,6 @@ def scrape_race(race_id):
         return 0
 
     soup = BeautifulSoup(response.text, "html.parser")
-
     place_node = soup.select_one(".event-header__name h1")
     date_node = soup.select_one(".date__full")
     category_node = soup.select_one(".event-header__kind")
@@ -220,7 +192,6 @@ def scrape_race(race_id):
 
     results = []
     unparsable_samples = []
-
     for row in athlete_rows:
         try:
             parsed = parse_result_row(row)
@@ -253,7 +224,6 @@ def scrape_race(race_id):
         except Exception as exc:
             if len(unparsable_samples) < 3:
                 unparsable_samples.append(f"ERRORE PARSER: {exc}")
-            continue
 
     if not results:
         print(f"   ⚠️ FIS race {race_id}: righe trovate ma nessun risultato interpretabile", flush=True)
@@ -279,21 +249,15 @@ def main():
 
     total = 0
     races_attempted = 0
-
     for season in seasons_to_scan():
         for event_id in fetch_events(season):
             for race_id in fetch_races(event_id):
                 total += scrape_race(race_id)
                 races_attempted += 1
-
                 if MAX_RACES and races_attempted >= MAX_RACES:
-                    print(
-                        f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate",
-                        flush=True,
-                    )
+                    print(f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate", flush=True)
                     print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
                     return
-
                 time.sleep(0.25)
             time.sleep(0.3)
 
