@@ -5,16 +5,6 @@ on:
     - cron: '30 2 * * *'
   workflow_dispatch:
     inputs:
-      season:
-        description: 'Stagione FIS da testare (es. 2026). Vuoto = stagione corrente'
-        required: false
-        default: ''
-        type: string
-      max_races:
-        description: 'Numero massimo di gare da esaminare (0 = nessun limite)'
-        required: false
-        default: '3'
-        type: string
       full_history:
         description: 'Scarica tutto lo storico FIS dal 2010'
         required: false
@@ -56,9 +46,9 @@ jobs:
       - name: Run FIS scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          FIS_SEASONS: ${{ inputs.season }}
-          FIS_MAX_RACES: ${{ inputs.max_races || '0' }}
-          FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
+          FIS_SEASONS: '2026'
+          FIS_MAX_RACES: '3'
+          FIS_FULL_HISTORY: '0'
           FIS_START_SEASON: '2010'
-          FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
+          FIS_ONLY_ITALIANS: '0'
         run: python scraper_fis.py
