@@ -18,6 +18,17 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"
 }
 
+SKI_BRANDS = {
+    "atomic",
+    "fischer",
+    "madshus",
+    "rossignol",
+    "salomon",
+    "peltonen",
+    "kastle",
+    "kaestle",
+}
+
 
 def current_fis_season():
     now = datetime.datetime.now()
@@ -95,6 +106,87 @@ def fetch_races(event_id):
         return []
 
 
+def _strip_ski_brand(name):
+    parts = name.split()
+    if parts and parts[-1].lower() in SKI_BRANDS:
+        parts.pop()
+    return " ".join(parts).strip()
+
+
+def parse_result_row(row):
+    """Interpreta una riga risultati FIS con fallback sul testo visibile.
+
+    La FIS ha cambiato più volte le classi HTML. Prima proviamo i selettori
+    storici; se non esistono, analizziamo il testo della riga, per esempio:
+    '1 202 ARTUSI Aksel 2004 ITA 2:14.56 72.08'.
+    """
+    # Vecchia struttura FIS: la manteniamo per compatibilità storica.
+    name_node = row.find("div", class_="athlete-name")
+    nation_node = row.find("span", class_="country__name-short")
+
+    if name_node:
+        name = _strip_ski_brand(name_node.get_text(" ", strip=True))
+        nation = nation_node.get_text(" ", strip=True) if nation_node else "N/D"
+        columns = [
+            re.sub(r"\s+", " ", col.get_text(" ", strip=True))
+            for col in row.find_all("div")
+            if col.get_text(" ", strip=True)
+        ]
+        position = columns[0] if columns else "N/D"
+        result_time = columns[-2] if len(columns) > 2 else "N/D"
+        fis_points = columns[-1] if len(columns) > 2 else ""
+        return {
+            "name": name,
+            "nation": nation,
+            "position": position,
+            "time": result_time,
+            "points": fis_points,
+            "fis_code": "",
+        }
+
+    # Nuova struttura FIS: parsing del testo completo della riga.
+    text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+    if not text:
+        return None
+
+    match = re.match(
+        r"^(?P<position>\d+|DNS|DNF|DSQ)\s+"
+        r"(?P<bib>\d+)\s+"
+        r"(?P<name>.+?)\s+"
+        r"(?P<year>(?:19|20)\d{2})\s+"
+        r"(?P<nation>[A-Z]{3})"
+        r"(?:\s+(?P<rest>.*))?$",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    name = _strip_ski_brand(match.group("name"))
+    nation = match.group("nation").upper()
+    position = match.group("position").upper()
+    rest = (match.group("rest") or "").strip()
+    rest_parts = rest.split()
+
+    result_time = "N/D"
+    fis_points = ""
+    if rest_parts:
+        if len(rest_parts) >= 2 and re.fullmatch(r"-?\d+(?:\.\d+)?", rest_parts[-1]):
+            fis_points = rest_parts[-1]
+            result_time = rest_parts[-2]
+        else:
+            result_time = rest_parts[-1]
+
+    return {
+        "name": name,
+        "nation": nation,
+        "position": position,
+        "time": result_time,
+        "points": fis_points,
+        "fis_code": "",
+    }
+
+
 def scrape_race(race_id):
     if not FORCE_REFRESH and fis_race_has_results(race_id):
         print(f"   ℹ️ FIS race {race_id}: già presente nel database", flush=True)
@@ -127,45 +219,46 @@ def scrape_race(race_id):
         return 0
 
     results = []
+    unparsable_samples = []
+
     for row in athlete_rows:
         try:
-            name_node = row.find("div", class_="athlete-name")
-            name = name_node.text.strip() if name_node else "N/D"
-            if name == "N/D":
+            parsed = parse_result_row(row)
+            if not parsed:
+                if len(unparsable_samples) < 3:
+                    sample = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+                    if sample:
+                        unparsable_samples.append(sample[:240])
                 continue
 
-            nation_node = row.find("span", class_="country__name-short")
-            nation = nation_node.text.strip() if nation_node else "N/D"
-            if SAVE_ONLY_ITALIANS and nation != "ITA":
+            if SAVE_ONLY_ITALIANS and parsed["nation"] != "ITA":
                 continue
-
-            columns = [col.text.strip() for col in row.find_all("div") if col.text.strip()]
-            position = columns[0] if len(columns) > 0 else "N/D"
-            fis_code = columns[1] if len(columns) > 1 else ""
-            result_time = columns[-2] if len(columns) > 2 else "N/D"
-            fis_points = columns[-1] if len(columns) > 2 else ""
 
             results.append({
                 "id_gara_fis": str(race_id),
-                "atleta_nome": name,
-                "codice_fis": fis_code,
-                "nazione": nation,
+                "atleta_nome": parsed["name"],
+                "codice_fis": parsed["fis_code"],
+                "nazione": parsed["nation"],
                 "societa": "N/D",
                 "comitato": "FIS",
                 "categoria": category,
                 "specialita": speciality,
-                "posizione": position,
-                "tempo": result_time,
-                "punti_fis": fis_points,
+                "posizione": parsed["position"],
+                "tempo": parsed["time"],
+                "punti_fis": parsed["points"],
                 "gara_nome": race_name,
                 "luogo": place,
                 "data_gara": race_date,
             })
-        except Exception:
+        except Exception as exc:
+            if len(unparsable_samples) < 3:
+                unparsable_samples.append(f"ERRORE PARSER: {exc}")
             continue
 
     if not results:
         print(f"   ⚠️ FIS race {race_id}: righe trovate ma nessun risultato interpretabile", flush=True)
+        for sample in unparsable_samples:
+            print(f"      DEBUG riga: {sample}", flush=True)
         return 0
 
     saved = upsert_risultati_fis(results)
