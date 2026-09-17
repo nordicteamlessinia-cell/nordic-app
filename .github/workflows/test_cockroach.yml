@@ -1,0 +1,47 @@
+name: Nordic Hub - Test CockroachDB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-db:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          mkdir -p ~/.postgresql
+          curl -fsSL "$COCKROACH_CA_URL" -o ~/.postgresql/root.crt
+          chmod 600 ~/.postgresql/root.crt
+
+      - name: Test database connection
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python - <<'PY'
+          from db import connect, count_rows
+
+          with connect() as conn:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT current_user, current_database()')
+                  user, database = cur.fetchone()
+                  print(f'OK connessione: user={user} database={database}')
+
+          for table in ('Gare', 'Risultati', 'Risultati_Fis'):
+              print(f'{table}: {count_rows(table)} righe')
+          PY
