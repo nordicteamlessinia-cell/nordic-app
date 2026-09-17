@@ -29,6 +29,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
       - name: Run FISI scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
