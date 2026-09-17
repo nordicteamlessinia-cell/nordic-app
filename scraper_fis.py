@@ -11,6 +11,7 @@ from db import fis_race_has_results, upsert_risultati_fis
 
 SAVE_ONLY_ITALIANS = os.getenv("FIS_ONLY_ITALIANS", "0") == "1"
 FORCE_REFRESH = os.getenv("FIS_FORCE_REFRESH", "0") == "1"
+MAX_RACES = int(os.getenv("FIS_MAX_RACES", "0") or "0")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"
@@ -120,6 +121,7 @@ def scrape_race(race_id):
 
     athlete_rows = soup.find_all("a", class_="table-row")
     if not athlete_rows:
+        print(f"   ⚠️ FIS race {race_id}: nessuna riga risultati trovata", flush=True)
         return 0
 
     results = []
@@ -174,10 +176,22 @@ def main():
     print("=========================================")
 
     total = 0
+    races_attempted = 0
+
     for season in seasons_to_scan():
         for event_id in fetch_events(season):
             for race_id in fetch_races(event_id):
                 total += scrape_race(race_id)
+                races_attempted += 1
+
+                if MAX_RACES and races_attempted >= MAX_RACES:
+                    print(
+                        f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate",
+                        flush=True,
+                    )
+                    print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
+                    return
+
                 time.sleep(0.25)
             time.sleep(0.3)
 
