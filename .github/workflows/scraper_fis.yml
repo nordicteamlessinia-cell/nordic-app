@@ -1,23 +1,10 @@
 name: Nordic Hub - Scraper FIS
 
 on:
-  schedule:
-    - cron: '30 2 * * *'
   workflow_dispatch:
-    inputs:
-      full_history:
-        description: 'Scarica tutto lo storico FIS dal 2010'
-        required: false
-        default: false
-        type: boolean
-      only_italians:
-        description: 'Salva solo atleti italiani'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
-  scraper-fis:
+  test-cockroach:
     runs-on: ubuntu-latest
 
     steps:
@@ -43,10 +30,20 @@ jobs:
           curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
           chmod 600 "$HOME/.postgresql/root.crt"
 
-      - name: Run FIS scraper
+      - name: Test connection only
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
-          FIS_START_SEASON: '2010'
-          FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
-        run: python scraper_fis.py
+        run: |
+          python - <<'PY'
+          from db import connect
+
+          with connect() as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT current_user, current_database()")
+                  user, database = cur.fetchone()
+                  print(f"OK connessione: user={user} database={database}")
+
+                  for table in ("Gare", "Risultati", "Risultati_Fis"):
+                      cur.execute(f'SELECT count(*) FROM "{table}"')
+                      print(f"{table}: {cur.fetchone()[0]} righe")
+          PY
