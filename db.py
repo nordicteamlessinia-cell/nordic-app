@@ -11,7 +11,15 @@ if not DATABASE_URL:
 
 
 def connect():
-    return psycopg.connect(DATABASE_URL, autocommit=True, connect_timeout=20)
+    # CockroachDB Cloud usa TLS. Nei runner GitHub non esiste di default
+    # ~/.postgresql/root.crt, quindi usiamo il trust store CA del sistema
+    # mantenendo la verifica del certificato attiva.
+    return psycopg.connect(
+        DATABASE_URL,
+        autocommit=True,
+        connect_timeout=20,
+        sslrootcert="system",
+    )
 
 
 def parse_date(value):
