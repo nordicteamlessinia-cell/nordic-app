@@ -1,10 +1,33 @@
 name: Nordic Hub - Scraper FIS
 
 on:
+  schedule:
+    - cron: '30 2 * * *'
   workflow_dispatch:
+    inputs:
+      season:
+        description: 'Stagione FIS da testare (es. 2026). Vuoto = stagione corrente'
+        required: false
+        default: ''
+        type: string
+      max_races:
+        description: 'Numero massimo di gare da esaminare (0 = nessun limite)'
+        required: false
+        default: '3'
+        type: string
+      full_history:
+        description: 'Scarica tutto lo storico FIS dal 2010'
+        required: false
+        default: false
+        type: boolean
+      only_italians:
+        description: 'Salva solo atleti italiani'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  test-cockroach:
+  scraper-fis:
     runs-on: ubuntu-latest
 
     steps:
@@ -30,20 +53,12 @@ jobs:
           curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
           chmod 600 "$HOME/.postgresql/root.crt"
 
-      - name: Test connection only
+      - name: Run FIS scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          python - <<'PY'
-          from db import connect
-
-          with connect() as conn:
-              with conn.cursor() as cur:
-                  cur.execute("SELECT current_user, current_database()")
-                  user, database = cur.fetchone()
-                  print(f"OK connessione: user={user} database={database}")
-
-                  for table in ("Gare", "Risultati", "Risultati_Fis"):
-                      cur.execute(f'SELECT count(*) FROM "{table}"')
-                      print(f"{table}: {cur.fetchone()[0]} righe")
-          PY
+          FIS_SEASONS: ${{ inputs.season }}
+          FIS_MAX_RACES: ${{ inputs.max_races || '0' }}
+          FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
+          FIS_START_SEASON: '2010'
+          FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
+        run: python scraper_fis.py
