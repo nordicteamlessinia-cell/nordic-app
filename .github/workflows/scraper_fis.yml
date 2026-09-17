@@ -11,6 +11,10 @@ jobs:
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Variabili ponte temporanee: scraper_fis.py le controlla ancora,
+      # ma il compatibility layer locale usa DATABASE_URL/CockroachDB.
+      SUPABASE_URL: cockroach-migration
+      SUPABASE_KEY: cockroach-migration
 
     steps:
       - name: Scarico il codice
