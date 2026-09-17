@@ -1,35 +1,43 @@
-name: Bot Scraper FIS
+name: Nordic Hub - Scraper FIS
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      full_history:
+        description: 'Scarica tutto lo storico FIS dal 2010'
+        required: false
+        default: false
+        type: boolean
+      only_italians:
+        description: 'Salva solo atleti italiani'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  aggiorna-database-fis:
+  scraper-fis:
     runs-on: ubuntu-latest
 
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # Variabili ponte temporanee: scraper_fis.py le controlla ancora,
-      # ma il compatibility layer locale usa DATABASE_URL/CockroachDB.
-      SUPABASE_URL: cockroach-migration
-      SUPABASE_KEY: cockroach-migration
-
     steps:
-      - name: Scarico il codice
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Preparo Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Installo le librerie e il Browser Fantasma
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install chromium
 
-      - name: 🚀 Lancia lo Scraper FIS!
+      - name: Run FIS scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
+          FIS_START_SEASON: '2010'
+          FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
         run: python scraper_fis.py
