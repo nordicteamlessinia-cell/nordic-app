@@ -12,6 +12,7 @@ from db import fis_race_has_results, upsert_risultati_fis
 SAVE_ONLY_ITALIANS = os.getenv("FIS_ONLY_ITALIANS", "0") == "1"
 FORCE_REFRESH = os.getenv("FIS_FORCE_REFRESH", "0") == "1"
 MAX_RACES = int(os.getenv("FIS_MAX_RACES", "0") or "0")
+TEST_RACE_ID = os.getenv("FIS_TEST_RACE_ID", "").strip()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"
@@ -96,6 +97,7 @@ def fetch_races(event_id):
 
 def scrape_race(race_id):
     if not FORCE_REFRESH and fis_race_has_results(race_id):
+        print(f"   ℹ️ FIS race {race_id}: già presente nel database", flush=True)
         return 0
 
     url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={race_id}"
@@ -163,6 +165,7 @@ def scrape_race(race_id):
             continue
 
     if not results:
+        print(f"   ⚠️ FIS race {race_id}: righe trovate ma nessun risultato interpretabile", flush=True)
         return 0
 
     saved = upsert_risultati_fis(results)
@@ -174,6 +177,12 @@ def main():
     print("=========================================")
     print("❄️ NORDIC HUB - SCRAPER FIS / COCKROACHDB")
     print("=========================================")
+
+    if TEST_RACE_ID:
+        print(f"🧪 Test diretto FIS race {TEST_RACE_ID}", flush=True)
+        total = scrape_race(TEST_RACE_ID)
+        print(f"🏁 Test FIS completato: {total} risultati elaborati", flush=True)
+        return
 
     total = 0
     races_attempted = 0
