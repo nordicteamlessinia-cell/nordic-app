@@ -271,6 +271,7 @@ def extract_category_and_speciality(soup):
 
 def scrape_race_results(race, slug, season, id_race):
     if fisi_race_has_results(id_race):
+        print(f"      ℹ️ idGara {id_race}: risultati già presenti", flush=True)
         return 0
 
     url = f"https://comitati.fisi.org/{slug}/gara/?idGara={id_race}&idComp={race['id_gara_fisi']}&d={season}"
@@ -313,6 +314,7 @@ def scrape_race_results(race, slug, season, id_race):
             i += 1
 
     if not rows:
+        print(f"      ⚠️ idGara {id_race}: pagina trovata ma nessun risultato interpretato", flush=True)
         return 0
 
     saved = upsert_risultati_fisi(rows)
@@ -347,6 +349,14 @@ def scrape_results(races):
                     id_race = href.split("idGara=")[1].split("&")[0]
                     if id_race not in ids:
                         ids.append(id_race)
+
+            print(
+                f"   🔎 idComp {race['id_gara_fisi']} | {race.get('gara_nome', '')} | idGara trovati: {len(ids)}",
+                flush=True,
+            )
+
+            if not ids:
+                print(f"      ⚠️ Nessun link idGara trovato nella pagina competizione", flush=True)
 
             for id_race in ids:
                 try:
