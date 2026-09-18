@@ -38,35 +38,6 @@ def seasons_to_scan():
     return [current]
 
 
-def season_months(season):
-    """Mesi della stagione FIS: luglio dell'anno precedente -> giugno della stagione."""
-    previous = season - 1
-    return [
-        f"07-{previous}", f"08-{previous}", f"09-{previous}",
-        f"10-{previous}", f"11-{previous}", f"12-{previous}",
-        f"01-{season}", f"02-{season}", f"03-{season}",
-        f"04-{season}", f"05-{season}", f"06-{season}",
-    ]
-
-
-def months_to_scan(season):
-    """In uso normale scansiona solo gli ultimi 3 mesi; storico = stagione completa."""
-    if os.getenv("FIS_FULL_HISTORY", "0") == "1" or os.getenv("FIS_SEASONS", "").strip():
-        return season_months(season)
-
-    now = datetime.datetime.now()
-    months = []
-    year = now.year
-    month = now.month
-    for _ in range(3):
-        months.append(f"{month:02d}-{year}")
-        month -= 1
-        if month == 0:
-            month = 12
-            year -= 1
-    return list(reversed(months))
-
-
 def format_fis_date(text):
     if not text or text == "N/D":
         return "N/D"
@@ -80,30 +51,32 @@ def format_fis_date(text):
 
 
 def fetch_events(season):
-    print(f"🌍 FIS: scansione stagione {season}", flush=True)
+    """Restituisce gli eventi Cross-Country FIS disputati in Italia con risultati."""
+    print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
     event_ids = []
-    for month in months_to_scan(season):
-        url = (
-            "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
-            f"?eventselection=actualresults&place=&sectorcode=CC&seasoncode={season}&categorycode="
-            "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode="
-            f"&seasonmonth={month}&saveselection=-1&seasonselection="
-            "&include_at_least_one_results=true"
-        )
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=30)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-            for link in soup.find_all(href=re.compile(r"eventid=\d+", re.IGNORECASE)):
-                match = re.search(r"eventid=(\d+)", link.get("href", ""), re.IGNORECASE)
-                if match:
-                    event_id = match.group(1)
-                    if event_id not in event_ids:
-                        event_ids.append(event_id)
-        except Exception as exc:
-            print(f"⚠️ FIS mese {month}: {exc}", flush=True)
-        time.sleep(0.4)
-    print(f"   Trovati {len(event_ids)} eventi FIS", flush=True)
+
+    url = (
+        "https://www.fis-ski.com/DB/general/calendar-results.html"
+        f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
+        "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
+        f"&seasonmonth=X-{season}&saveselection=-1&seasonselection="
+    )
+
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        for link in soup.find_all(href=re.compile(r"eventid=\\d+", re.IGNORECASE)):
+            match = re.search(r"eventid=(\\d+)", link.get("href", ""), re.IGNORECASE)
+            if match:
+                event_id = match.group(1)
+                if event_id not in event_ids:
+                    event_ids.append(event_id)
+    except Exception as exc:
+        print(f"⚠️ FIS stagione {season}: {exc}", flush=True)
+
+    print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
     return event_ids
 
 
