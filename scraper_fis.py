@@ -243,6 +243,13 @@ def scrape_race(race_id):
             EMPTY_RACE_SAMPLES.append(str(race_id))
         if DEBUG:
             print(f"   ℹ️ FIS race {race_id}: nessuna classifica atleta pubblicata", flush=True)
+            debug_rows = []
+            for row in all_rows[:10]:
+                row_text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+                if row_text:
+                    debug_rows.append(row_text[:300])
+            for sample in debug_rows:
+                print(f"      DEBUG pagina: {sample}", flush=True)
         return 0
 
     results = []
