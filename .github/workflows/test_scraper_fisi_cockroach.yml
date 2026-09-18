@@ -1,0 +1,52 @@
+name: Nordic Hub - Test Scraper FISI Cockroach
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Stagione FISI (anno di inizio, es. 2026 = 2026/27)'
+        required: false
+        default: '2026'
+        type: string
+      committee:
+        description: 'Comitato FISI da testare (es. veneto)'
+        required: false
+        default: 'veneto'
+        type: string
+
+jobs:
+  scraper-fisi-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Run FISI scraper test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FISI_FULL_HISTORY: '0'
+          FISI_SEASONS: ${{ inputs.season }}
+          FISI_COMMITTEES: ${{ inputs.committee }}
+        run: python scraper_fisi.py
