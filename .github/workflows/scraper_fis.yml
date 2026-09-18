@@ -15,6 +15,16 @@ on:
         required: false
         default: false
         type: boolean
+      test_race_id:
+        description: 'Testa una singola race FIS (lascia vuoto per scansione normale)'
+        required: false
+        default: ''
+        type: string
+      debug:
+        description: 'Mostra dettagli diagnostici'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   scraper-fis:
@@ -49,6 +59,8 @@ jobs:
           FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
           FIS_START_SEASON: '2010'
           FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
+          FIS_TEST_RACE_ID: ${{ inputs.test_race_id || '' }}
+          FIS_DEBUG: ${{ inputs.debug && '1' || '0' }}
           FIS_FORCE_REFRESH: '0'
           FIS_MAX_RACES: '0'
         run: python scraper_fis.py
