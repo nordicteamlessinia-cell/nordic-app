@@ -322,13 +322,30 @@ def scrape_race_results(race, slug, season, id_race):
     return saved
 
 
+def parse_race_date(value):
+    text = str(value or "").strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def scrape_results(races):
     total = 0
     print("⛷️ FISI: controllo classifiche", flush=True)
 
+    future_skipped = 0
+
     for race in races:
         committee = race.get("comitato", "")
         if not committee or committee in {"Altre / Non Assegnate", "Internazionale/FIS"}:
+            continue
+
+        race_date = parse_race_date(race.get("data_gara"))
+        if race_date and race_date > datetime.date.today():
+            future_skipped += 1
             continue
 
         slug = COMITATI_FISI_REVERSE.get(committee)
@@ -367,6 +384,8 @@ def scrape_results(races):
         except Exception as exc:
             print(f"⚠️ Competizione {race['id_gara_fisi']}: {exc}", flush=True)
 
+    if future_skipped:
+        print(f"⏭️ FISI: {future_skipped} competizioni future saltate", flush=True)
     print(f"✅ FISI: {total} nuovi risultati elaborati", flush=True)
 
 
