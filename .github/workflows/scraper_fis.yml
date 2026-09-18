@@ -60,7 +60,7 @@ jobs:
           FIS_START_SEASON: '2010'
           FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
           FIS_TEST_RACE_ID: ${{ inputs.test_race_id || '' }}
-          FIS_DEBUG: ${{ inputs.debug && '1' || '0' }}
-          FIS_FORCE_REFRESH: '0'
+          FIS_DEBUG: ${{ (inputs.debug || inputs.test_race_id != '') && '1' || '0' }}
+          FIS_FORCE_REFRESH: ${{ inputs.test_race_id != '' && '1' || '0' }}
           FIS_MAX_RACES: '0'
         run: python scraper_fis.py
