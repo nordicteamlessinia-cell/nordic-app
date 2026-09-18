@@ -46,8 +46,9 @@ jobs:
       - name: Run FIS scraper
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          FIS_TEST_RACE_ID: '52501'
-          FIS_FULL_HISTORY: '0'
-          FIS_ONLY_ITALIANS: '0'
-          FIS_FORCE_REFRESH: '1'
+          FIS_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
+          FIS_START_SEASON: '2010'
+          FIS_ONLY_ITALIANS: ${{ inputs.only_italians && '1' || '0' }}
+          FIS_FORCE_REFRESH: '0'
+          FIS_MAX_RACES: '0'
         run: python scraper_fis.py
