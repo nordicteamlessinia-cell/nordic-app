@@ -35,8 +35,14 @@ def seasons_to_scan():
 
 
 def season_months(season):
+    """Mesi della stagione FIS: luglio dell'anno precedente -> giugno della stagione."""
     previous = season - 1
-    return [f"10-{previous}", f"11-{previous}", f"12-{previous}", f"01-{season}", f"02-{season}", f"03-{season}", f"04-{season}"]
+    return [
+        f"07-{previous}", f"08-{previous}", f"09-{previous}",
+        f"10-{previous}", f"11-{previous}", f"12-{previous}",
+        f"01-{season}", f"02-{season}", f"03-{season}",
+        f"04-{season}", f"05-{season}", f"06-{season}",
+    ]
 
 
 def format_fis_date(text):
