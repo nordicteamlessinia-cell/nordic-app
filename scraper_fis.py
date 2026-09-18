@@ -103,25 +103,54 @@ def fetch_events(season):
 
 
 def fetch_related_races(seed_race_id):
-    """Recupera tutte le raceid collegate allo stesso evento partendo da una race valida."""
+    """Parte da una race valida, ricava l'eventid e poi tutte le race dello stesso evento."""
     url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={seed_race_id}"
+
     try:
         response = requests.get(url, headers=HEADERS, timeout=30)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+        html = response.text
 
-        race_ids = [str(seed_race_id)]
-        for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
-            match = re.search(r"raceid=(\d+)", href, re.IGNORECASE)
-            if match and match.group(1) not in race_ids:
-                race_ids.append(match.group(1))
+        event_id = None
+        patterns = [
+            r"eventid=(\d+)",
+            r'"eventId"\s*:\s*"?(\d+)',
+            r'"eventid"\s*:\s*"?(\d+)',
+            r"'eventId'\s*:\s*'?(\d+)",
+            r"'eventid'\s*:\s*'?(\d+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                event_id = match.group(1)
+                break
+
+        if not event_id:
+            soup = BeautifulSoup(html, "html.parser")
+            for link in soup.find_all("a", href=True):
+                match = re.search(r"eventid=(\d+)", link.get("href", ""), re.IGNORECASE)
+                if match:
+                    event_id = match.group(1)
+                    break
+
+        if not event_id:
+            print(
+                f"   ⚠️ Seed race {seed_race_id}: eventid non trovato, uso solo la seed",
+                flush=True,
+            )
+            return [str(seed_race_id)]
+
+        race_ids = fetch_races(event_id)
+        if str(seed_race_id) not in race_ids:
+            race_ids.insert(0, str(seed_race_id))
 
         print(
-            f"   🎯 Seed race {seed_race_id}: {len(race_ids)} race collegate trovate",
+            f"   🎯 Seed race {seed_race_id} -> event {event_id}: {len(race_ids)} race collegate",
             flush=True,
         )
         return race_ids
+
     except Exception as exc:
         print(f"⚠️ Seed FIS race {seed_race_id}: {exc}", flush=True)
         return [str(seed_race_id)]
