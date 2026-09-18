@@ -15,6 +15,7 @@ TEST_RACE_ID = os.getenv("FIS_TEST_RACE_ID", "").strip()
 DEBUG = os.getenv("FIS_DEBUG", "0") == "1"
 
 STATS = {"already": 0, "empty": 0, "unparsable": 0, "saved_races": 0}
+EMPTY_RACE_SAMPLES = []
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"}
 
@@ -238,6 +239,8 @@ def scrape_race(race_id):
 
     if not athlete_rows:
         STATS["empty"] += 1
+        if len(EMPTY_RACE_SAMPLES) < 10:
+            EMPTY_RACE_SAMPLES.append(str(race_id))
         if DEBUG:
             print(f"   ℹ️ FIS race {race_id}: nessuna classifica atleta pubblicata", flush=True)
         return 0
@@ -320,6 +323,8 @@ def main():
         f"📊 Gare salvate: {STATS['saved_races']} | già presenti: {STATS['already']} | senza classifica: {STATS['empty']} | non interpretabili: {STATS['unparsable']}",
         flush=True,
     )
+    if EMPTY_RACE_SAMPLES:
+        print(f"🔎 Esempi race senza classifica: {', '.join(EMPTY_RACE_SAMPLES)}", flush=True)
     print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
 
 
