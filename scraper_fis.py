@@ -21,6 +21,12 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/Gi
 
 SKI_BRANDS = {"atomic", "fischer", "madshus", "rossignol", "salomon", "peltonen", "kastle", "kaestle"}
 
+# Seed race note per gli eventi italiani già identificati sulla FIS.
+# Da una race valida recuperiamo tutte le altre raceid dello stesso evento.
+ITALY_EVENT_SEEDS = {
+    2027: ["52501", "51858"],  # Anterselva/Dobbiaco, Val di Fiemme
+}
+
 
 def current_fis_season():
     now = datetime.datetime.now()
@@ -94,6 +100,31 @@ def fetch_events(season):
 
     print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
     return event_ids
+
+
+def fetch_related_races(seed_race_id):
+    """Recupera tutte le raceid collegate allo stesso evento partendo da una race valida."""
+    url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={seed_race_id}"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        race_ids = [str(seed_race_id)]
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            match = re.search(r"raceid=(\d+)", href, re.IGNORECASE)
+            if match and match.group(1) not in race_ids:
+                race_ids.append(match.group(1))
+
+        print(
+            f"   🎯 Seed race {seed_race_id}: {len(race_ids)} race collegate trovate",
+            flush=True,
+        )
+        return race_ids
+    except Exception as exc:
+        print(f"⚠️ Seed FIS race {seed_race_id}: {exc}", flush=True)
+        return [str(seed_race_id)]
 
 
 def fetch_races(event_id):
@@ -304,8 +335,19 @@ def main():
     total = 0
     races_attempted = 0
     for season in seasons_to_scan():
-        for event_id in fetch_events(season):
-            for race_id in fetch_races(event_id):
+        seed_races = ITALY_EVENT_SEEDS.get(season, [])
+        if seed_races:
+            print(f"🌍 FIS: stagione {season} - {len(seed_races)} eventi italiani identificati", flush=True)
+            race_ids = []
+            for seed_race_id in seed_races:
+                for race_id in fetch_related_races(seed_race_id):
+                    if race_id not in race_ids:
+                        race_ids.append(race_id)
+                time.sleep(0.3)
+
+            print(f"   Trovate {len(race_ids)} race FIS nei 2 eventi italiani", flush=True)
+
+            for race_id in race_ids:
                 total += scrape_race(race_id)
                 races_attempted += 1
                 if MAX_RACES and races_attempted >= MAX_RACES:
@@ -313,7 +355,17 @@ def main():
                     print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
                     return
                 time.sleep(0.25)
-            time.sleep(0.3)
+        else:
+            for event_id in fetch_events(season):
+                for race_id in fetch_races(event_id):
+                    total += scrape_race(race_id)
+                    races_attempted += 1
+                    if MAX_RACES and races_attempted >= MAX_RACES:
+                        print(f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate", flush=True)
+                        print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
+                        return
+                    time.sleep(0.25)
+                time.sleep(0.3)
 
     print(
         f"📊 Gare salvate: {STATS['saved_races']} | già presenti: {STATS['already']} | senza classifica: {STATS['empty']} | non interpretabili: {STATS['unparsable']}",
