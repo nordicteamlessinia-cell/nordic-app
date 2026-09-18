@@ -113,8 +113,11 @@ def fetch_races(event_id):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         race_ids = []
-        for link in soup.find_all(href=re.compile(r"raceid=\d+", re.IGNORECASE)):
-            match = re.search(r"raceid=(\d+)", link.get("href", ""), re.IGNORECASE)
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            if "results.html" not in href.lower() or "raceid=" not in href.lower():
+                continue
+            match = re.search(r"raceid=(\d+)", href, re.IGNORECASE)
             if match and match.group(1) not in race_ids:
                 race_ids.append(match.group(1))
         return race_ids
