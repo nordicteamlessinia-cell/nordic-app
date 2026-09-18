@@ -38,6 +38,16 @@ def seasons_to_scan():
     return [current]
 
 
+def season_months(season):
+    previous = season - 1
+    return [
+        f"07-{previous}", f"08-{previous}", f"09-{previous}",
+        f"10-{previous}", f"11-{previous}", f"12-{previous}",
+        f"01-{season}", f"02-{season}", f"03-{season}",
+        f"04-{season}", f"05-{season}", f"06-{season}",
+    ]
+
+
 def format_fis_date(text):
     if not text or text == "N/D":
         return "N/D"
@@ -51,47 +61,39 @@ def format_fis_date(text):
 
 
 def fetch_events(season):
-    """Restituisce gli eventi Cross-Country FIS disputati in Italia con risultati."""
+    """Eventi Cross-Country disputati in Italia con risultati, mese per mese."""
     print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
+    event_ids = []
 
-    paths = [
-        "https://www.fis-ski.com/DB/cross-country/calendar-results.html",
-        "https://www.fis-ski.com/DB/general/calendar-results.html",
-    ]
-
-    for base_url in paths:
+    for month in season_months(season):
         url = (
-            base_url
-            + f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
-            + "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
-            + f"&seasonmonth=X-{season}&saveselection=-1&seasonselection="
+            "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
+            f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
+            "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
+            f"&seasonmonth={month}&saveselection=-1&seasonselection="
         )
 
         try:
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
 
-            event_ids = []
-            for link in soup.find_all(href=re.compile(r"eventid=\\d+", re.IGNORECASE)):
-                match = re.search(r"eventid=(\\d+)", link.get("href", ""), re.IGNORECASE)
-                if match and match.group(1) not in event_ids:
-                    event_ids.append(match.group(1))
+            ids_month = []
+            for event_id in re.findall(r"eventid=(\\d+)", response.text, re.IGNORECASE):
+                if event_id not in ids_month:
+                    ids_month.append(event_id)
+                if event_id not in event_ids:
+                    event_ids.append(event_id)
 
-            print(
-                f"   🔎 {base_url.split('/DB/')[1]} -> {len(event_ids)} eventi | HTML {len(response.text)} caratteri",
-                flush=True,
-            )
-
-            if event_ids:
-                print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
-                return event_ids
+            if ids_month:
+                print(f"   ✅ {month}: {len(ids_month)} eventi", flush=True)
 
         except Exception as exc:
-            print(f"⚠️ FIS endpoint {base_url}: {exc}", flush=True)
+            print(f"⚠️ FIS mese {month}: {exc}", flush=True)
 
-    print("   Trovati 0 eventi FIS in Italia", flush=True)
-    return []
+        time.sleep(0.25)
+
+    print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
+    return event_ids
 
 
 def fetch_races(event_id):
