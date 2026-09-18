@@ -139,33 +139,53 @@ def detect_committee(item):
 
 
 def season_from_date(data_gara):
+    """FISI usa l'anno di inizio stagione: es. settembre 2026 -> idStagione 2026."""
     text = str(data_gara or "").strip()
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
         try:
             dt = datetime.datetime.strptime(text, fmt)
-            return str(dt.year + 1 if dt.month >= 6 else dt.year)
+            return str(dt.year if dt.month >= 6 else dt.year - 1)
         except ValueError:
             continue
-    return str(datetime.datetime.now().year)
+    now = datetime.datetime.now()
+    return str(now.year if now.month >= 6 else now.year - 1)
 
 
 def seasons_to_scan():
+    explicit = os.getenv("FISI_SEASONS", "").strip()
+    if explicit:
+        return [int(x.strip()) for x in explicit.split(",") if x.strip()]
+
     now = datetime.datetime.now()
+    current = now.year if now.month >= 6 else now.year - 1
+
     if os.getenv("FISI_FULL_HISTORY", "0") == "1":
         start = int(os.getenv("FISI_START_SEASON", "2010"))
-        return list(range(start, now.year + 2))
-    return [now.year - 2, now.year - 1, now.year, now.year + 1]
+        return list(range(start, current + 1))
+
+    return [current]
+
+
+def committees_to_scan():
+    explicit = os.getenv("FISI_COMMITTEES", "").strip().lower()
+    if not explicit:
+        return list(COMITATI_FISI.items())
+
+    wanted = {x.strip() for x in explicit.split(",") if x.strip()}
+    return [(slug, name) for slug, name in COMITATI_FISI.items() if slug in wanted]
 
 
 def fetch_competitions():
     seasons = seasons_to_scan()
+    committees = committees_to_scan()
     print(f"🌍 FISI: scansione stagioni {seasons}", flush=True)
+    print(f"   Comitati: {', '.join(slug for slug, _ in committees)}", flush=True)
 
     races = {}
     portal_yield = defaultdict(int)
     claims = defaultdict(list)
 
-    for slug, portal_name in COMITATI_FISI.items():
+    for slug, portal_name in committees:
         for season in seasons:
             offset, limit = 0, 500
             while True:
