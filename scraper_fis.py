@@ -53,31 +53,45 @@ def format_fis_date(text):
 def fetch_events(season):
     """Restituisce gli eventi Cross-Country FIS disputati in Italia con risultati."""
     print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
-    event_ids = []
 
-    url = (
-        "https://www.fis-ski.com/DB/general/calendar-results.html"
-        f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
-        "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
-        f"&seasonmonth=X-{season}&saveselection=-1&seasonselection="
-    )
+    paths = [
+        "https://www.fis-ski.com/DB/cross-country/calendar-results.html",
+        "https://www.fis-ski.com/DB/general/calendar-results.html",
+    ]
 
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=30)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+    for base_url in paths:
+        url = (
+            base_url
+            + f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
+            + "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
+            + f"&seasonmonth=X-{season}&saveselection=-1&seasonselection="
+        )
 
-        for link in soup.find_all(href=re.compile(r"eventid=\\d+", re.IGNORECASE)):
-            match = re.search(r"eventid=(\\d+)", link.get("href", ""), re.IGNORECASE)
-            if match:
-                event_id = match.group(1)
-                if event_id not in event_ids:
-                    event_ids.append(event_id)
-    except Exception as exc:
-        print(f"⚠️ FIS stagione {season}: {exc}", flush=True)
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
 
-    print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
-    return event_ids
+            event_ids = []
+            for link in soup.find_all(href=re.compile(r"eventid=\\d+", re.IGNORECASE)):
+                match = re.search(r"eventid=(\\d+)", link.get("href", ""), re.IGNORECASE)
+                if match and match.group(1) not in event_ids:
+                    event_ids.append(match.group(1))
+
+            print(
+                f"   🔎 {base_url.split('/DB/')[1]} -> {len(event_ids)} eventi | HTML {len(response.text)} caratteri",
+                flush=True,
+            )
+
+            if event_ids:
+                print(f"   Trovati {len(event_ids)} eventi FIS in Italia", flush=True)
+                return event_ids
+
+        except Exception as exc:
+            print(f"⚠️ FIS endpoint {base_url}: {exc}", flush=True)
+
+    print("   Trovati 0 eventi FIS in Italia", flush=True)
+    return []
 
 
 def fetch_races(event_id):
