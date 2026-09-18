@@ -93,9 +93,8 @@ def fetch_events(season):
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            rows = soup.select('a.table-row[href*="eventid="]')
-            for row in rows:
-                match = re.search(r"eventid=(\d+)", row.get("href", ""), re.IGNORECASE)
+            for link in soup.find_all(href=re.compile(r"eventid=\d+", re.IGNORECASE)):
+                match = re.search(r"eventid=(\d+)", link.get("href", ""), re.IGNORECASE)
                 if match:
                     event_id = match.group(1)
                     if event_id not in event_ids:
@@ -114,8 +113,8 @@ def fetch_races(event_id):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         race_ids = []
-        for row in soup.select('a.table-row[href*="raceid="]'):
-            match = re.search(r"raceid=(\d+)", row.get("href", ""), re.IGNORECASE)
+        for link in soup.find_all(href=re.compile(r"raceid=\d+", re.IGNORECASE)):
+            match = re.search(r"raceid=(\d+)", link.get("href", ""), re.IGNORECASE)
             if match and match.group(1) not in race_ids:
                 race_ids.append(match.group(1))
         return race_ids
