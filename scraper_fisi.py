@@ -81,13 +81,15 @@ ACRONIMI_FISI = {
 }
 
 FONDO_KEYWORDS = ("FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDIC", "NORDICO", "XC")
-LISTA_NERA = ("ALPINO", "SLALOM", "GIGANTE", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKIROLL", "ROLLER SKI", "ROLLERSKI", "ROLLER", "SKELETON", "BOB", "JUMP", "SALTO")
+LISTA_NERA = ("ALPINO", "SLALOM", "GIGANTE", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO")
 
 session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
 session.mount("https://", HTTPAdapter(max_retries=retries))
 session.mount("http://", HTTPAdapter(max_retries=retries))
 session.headers.update({"User-Agent": "Mozilla/5.0 NordicHub/GitHubActions"})
+
+EMPTY_RESULT_DEBUG_SHOWN = False
 
 
 def is_cross_country(item):
@@ -314,7 +316,13 @@ def scrape_race_results(race, slug, season, id_race):
             i += 1
 
     if not rows:
+        global EMPTY_RESULT_DEBUG_SHOWN
         print(f"      ⚠️ idGara {id_race}: pagina trovata ma nessun risultato interpretato", flush=True)
+        if not EMPTY_RESULT_DEBUG_SHOWN:
+            EMPTY_RESULT_DEBUG_SHOWN = True
+            print(f"      🔎 DEBUG idGara {id_race}: primi valori trovati nella pagina", flush=True)
+            for idx, value in enumerate(athlete_texts[:40]):
+                print(f"         [{idx}] {value}", flush=True)
         return 0
 
     saved = upsert_risultati_fisi(rows)
