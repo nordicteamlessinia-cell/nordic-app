@@ -48,6 +48,24 @@ def season_months(season):
     ]
 
 
+def months_to_scan(season):
+    """In uso normale scansiona solo gli ultimi 3 mesi; storico = stagione completa."""
+    if os.getenv("FIS_FULL_HISTORY", "0") == "1" or os.getenv("FIS_SEASONS", "").strip():
+        return season_months(season)
+
+    now = datetime.datetime.now()
+    months = []
+    year = now.year
+    month = now.month
+    for _ in range(3):
+        months.append(f"{month:02d}-{year}")
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return list(reversed(months))
+
+
 def format_fis_date(text):
     if not text or text == "N/D":
         return "N/D"
@@ -63,7 +81,7 @@ def format_fis_date(text):
 def fetch_events(season):
     print(f"🌍 FIS: scansione stagione {season}", flush=True)
     event_ids = []
-    for month in season_months(season):
+    for month in months_to_scan(season):
         url = (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
             f"?eventselection=actualresults&place=&sectorcode=CC&seasoncode={season}&categorycode="
@@ -74,9 +92,14 @@ def fetch_events(season):
         try:
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
-            for event_id in re.findall(r"eventid=(\d+)", response.text, re.IGNORECASE):
-                if event_id not in event_ids:
-                    event_ids.append(event_id)
+            soup = BeautifulSoup(response.text, "html.parser")
+            rows = soup.select('a.table-row[href*="eventid="]')
+            for row in rows:
+                match = re.search(r"eventid=(\d+)", row.get("href", ""), re.IGNORECASE)
+                if match:
+                    event_id = match.group(1)
+                    if event_id not in event_ids:
+                        event_ids.append(event_id)
         except Exception as exc:
             print(f"⚠️ FIS mese {month}: {exc}", flush=True)
         time.sleep(0.4)
@@ -89,7 +112,13 @@ def fetch_races(event_id):
     try:
         response = requests.get(url, headers=HEADERS, timeout=30)
         response.raise_for_status()
-        return list(dict.fromkeys(re.findall(r"raceid=(\d+)", response.text, re.IGNORECASE)))
+        soup = BeautifulSoup(response.text, "html.parser")
+        race_ids = []
+        for row in soup.select('a.table-row[href*="raceid="]'):
+            match = re.search(r"raceid=(\d+)", row.get("href", ""), re.IGNORECASE)
+            if match and match.group(1) not in race_ids:
+                race_ids.append(match.group(1))
+        return race_ids
     except Exception as exc:
         print(f"⚠️ Evento FIS {event_id}: {exc}", flush=True)
         return []
