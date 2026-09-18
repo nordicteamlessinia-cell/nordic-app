@@ -10,6 +10,16 @@ on:
         required: false
         default: false
         type: boolean
+      season:
+        description: 'Stagione FISI da testare (anno di inizio, es. 2026 = 2026/27)'
+        required: false
+        default: '2026'
+        type: string
+      committee:
+        description: 'Comitato FISI da testare (slug, es. veneto; vuoto = tutti)'
+        required: false
+        default: 'veneto'
+        type: string
 
 jobs:
   scraper-fisi:
@@ -43,4 +53,6 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FISI_FULL_HISTORY: ${{ inputs.full_history && '1' || '0' }}
           FISI_START_SEASON: '2010'
+          FISI_SEASONS: ${{ inputs.season || '' }}
+          FISI_COMMITTEES: ${{ inputs.committee || '' }}
         run: python scraper_fisi.py
