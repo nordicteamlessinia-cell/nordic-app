@@ -12,6 +12,9 @@ SAVE_ONLY_ITALIANS = os.getenv("FIS_ONLY_ITALIANS", "0") == "1"
 FORCE_REFRESH = os.getenv("FIS_FORCE_REFRESH", "0") == "1"
 MAX_RACES = int(os.getenv("FIS_MAX_RACES", "0") or "0")
 TEST_RACE_ID = os.getenv("FIS_TEST_RACE_ID", "").strip()
+DEBUG = os.getenv("FIS_DEBUG", "0") == "1"
+
+STATS = {"already": 0, "empty": 0, "unparsable": 0, "saved_races": 0}
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NordicHub/GitHubActions"}
 
@@ -63,7 +66,7 @@ def fetch_events(season):
     for month in season_months(season):
         url = (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
-            f"?eventselection=&place=&sectorcode=CC&seasoncode={season}&categorycode="
+            f"?eventselection=actualresults&place=&sectorcode=CC&seasoncode={season}&categorycode="
             "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode="
             f"&seasonmonth={month}&saveselection=-1&seasonselection="
             "&include_at_least_one_results=true"
@@ -168,7 +171,7 @@ def parse_result_row(row):
 
 def scrape_race(race_id):
     if not FORCE_REFRESH and fis_race_has_results(race_id):
-        print(f"   ℹ️ FIS race {race_id}: già presente nel database", flush=True)
+        STATS["already"] += 1
         return 0
 
     url = f"https://www.fis-ski.com/DB/general/results.html?sectorcode=CC&raceid={race_id}"
@@ -191,9 +194,21 @@ def scrape_race(race_id):
     speciality = speciality_node.text.strip() if speciality_node else "Cross-Country"
     race_name = f"{place} - {speciality}" if speciality and speciality != "N/D" else place
 
-    athlete_rows = soup.find_all("a", class_="table-row")
+    all_rows = soup.find_all("a", class_="table-row")
+    athlete_rows = []
+    for row in all_rows:
+        row_text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+        if row.find("div", class_="athlete-name") or re.match(
+            r"^(?:\d+|DNS|DNF|DSQ)\s+\d+\s+(?:\d{6,8}\s+)?.+?\s+(?:19|20)\d{2}\s+[A-Z]{3}\b",
+            row_text,
+            re.IGNORECASE,
+        ):
+            athlete_rows.append(row)
+
     if not athlete_rows:
-        print(f"   ⚠️ FIS race {race_id}: nessuna riga risultati trovata", flush=True)
+        STATS["empty"] += 1
+        if DEBUG:
+            print(f"   ℹ️ FIS race {race_id}: nessuna classifica atleta pubblicata", flush=True)
         return 0
 
     results = []
@@ -232,12 +247,15 @@ def scrape_race(race_id):
                 unparsable_samples.append(f"ERRORE PARSER: {exc}")
 
     if not results:
-        print(f"   ⚠️ FIS race {race_id}: righe trovate ma nessun risultato interpretabile", flush=True)
-        for sample in unparsable_samples:
-            print(f"      DEBUG riga: {sample}", flush=True)
+        STATS["unparsable"] += 1
+        if DEBUG:
+            print(f"   ⚠️ FIS race {race_id}: righe atleta non interpretabili", flush=True)
+            for sample in unparsable_samples:
+                print(f"      DEBUG riga: {sample}", flush=True)
         return 0
 
     saved = upsert_risultati_fis(results)
+    STATS["saved_races"] += 1
     print(f"   ✅ FIS race {race_id}: {saved} risultati | {race_name}", flush=True)
     return saved
 
@@ -267,6 +285,10 @@ def main():
                 time.sleep(0.25)
             time.sleep(0.3)
 
+    print(
+        f"📊 Gare salvate: {STATS['saved_races']} | già presenti: {STATS['already']} | senza classifica: {STATS['empty']} | non interpretabili: {STATS['unparsable']}",
+        flush=True,
+    )
     print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
 
 
