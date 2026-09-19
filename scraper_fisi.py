@@ -340,6 +340,27 @@ def parse_race_date(value):
     return None
 
 
+def fetch_competition_page(id_comp, season, preferred_slug):
+    """Apre la pagina competizione; se il portale assegnato dà 404 prova gli altri comitati."""
+    slugs = [preferred_slug] + [s for s in COMITATI_FISI if s != preferred_slug]
+
+    last_error = None
+    for slug in slugs:
+        url = f"https://comitati.fisi.org/{slug}/competizione/?idComp={id_comp}&d={season}"
+        try:
+            response = session.get(url, timeout=25)
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            return BeautifulSoup(response.text, "html.parser"), slug
+        except Exception as exc:
+            last_error = exc
+
+    if last_error:
+        raise last_error
+    raise requests.HTTPError(f"Competizione {id_comp} non trovata su nessun portale FISI")
+
+
 def scrape_results(races):
     total = 0
     print("⛷️ FISI: controllo classifiche", flush=True)
@@ -361,12 +382,16 @@ def scrape_results(races):
             continue
 
         season = season_from_date(race.get("data_gara"))
-        competition_url = f"https://comitati.fisi.org/{slug}/competizione/?idComp={race['id_gara_fisi']}&d={season}"
 
         try:
-            response = session.get(competition_url, timeout=25)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup, resolved_slug = fetch_competition_page(race["id_gara_fisi"], season, slug)
+            if resolved_slug != slug:
+                print(
+                    f"   🔁 idComp {race['id_gara_fisi']}: portale {slug} non valido → {resolved_slug}",
+                    flush=True,
+                )
+                slug = resolved_slug
+
             ids = []
             for link in soup.find_all("a", href=True):
                 href = link["href"]
@@ -390,7 +415,7 @@ def scrape_results(races):
                     print(f"   ⚠️ idGara {id_race}: {exc}", flush=True)
                 time.sleep(0.25)
         except Exception as exc:
-            print(f"⚠️ Competizione {race['id_gara_fisi']}: {exc}", flush=True)
+            print(f"⚠️ Competizione {race['id_gara_fisi']}: non trovata su alcun portale FISI ({exc})", flush=True)
 
     if future_skipped:
         print(f"⏭️ FISI: {future_skipped} competizioni future saltate", flush=True)
