@@ -170,7 +170,7 @@ def seasons_to_scan():
 
 def committees_to_scan():
     explicit = os.getenv("FISI_COMMITTEES", "").strip().lower()
-    if not explicit:
+    if not explicit or explicit == "all":
         return list(COMITATI_FISI.items())
 
     wanted = {x.strip() for x in explicit.split(",") if x.strip()}
