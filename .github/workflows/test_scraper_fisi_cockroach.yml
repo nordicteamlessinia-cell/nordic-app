@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       season:
-        description: 'Stagione FISI (anno di inizio, es. 2026 = 2026/27)'
+        description: 'Stagione FISI (anno di inizio, es. 2025 = 2025/26)'
         required: false
-        default: '2026'
+        default: '2025'
         type: string
       committee:
-        description: 'Comitato FISI da testare (es. veneto)'
+        description: 'Comitato FISI da testare: all oppure slug singolo (es. veneto)'
         required: false
-        default: 'veneto'
+        default: 'all'
         type: string
 
 jobs:
