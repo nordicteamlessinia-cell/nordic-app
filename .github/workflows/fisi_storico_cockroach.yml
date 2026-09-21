@@ -1,0 +1,66 @@
+name: Nordic Hub - Storico FISI Cockroach
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill-fisi:
+    name: FISI stagione ${{ matrix.season }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        season:
+          - 2010
+          - 2011
+          - 2012
+          - 2013
+          - 2014
+          - 2015
+          - 2016
+          - 2017
+          - 2018
+          - 2019
+          - 2020
+          - 2021
+          - 2022
+          - 2023
+          - 2024
+          - 2025
+          - 2026
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Scrape FISI season ${{ matrix.season }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FISI_FULL_HISTORY: '0'
+          FISI_SEASONS: ${{ matrix.season }}
+          FISI_COMMITTEES: 'all'
+        run: python scraper_fisi.py
