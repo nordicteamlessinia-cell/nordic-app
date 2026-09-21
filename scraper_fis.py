@@ -67,22 +67,13 @@ def format_fis_date(text):
 
 
 def _extract_event_ids(html):
-    """Estrae gli eventid FIS da una pagina calendario, mantenendo l'ordine."""
-    ids = []
-    for event_id in re.findall(r"eventid=(\\d+)", html, re.IGNORECASE):
-        if event_id not in ids:
-            ids.append(event_id)
-    return ids
-
-
-def _extract_event_ids(html):
     """Estrae gli eventid FIS da HTML/JSON/testo mantenendo l'ordine."""
     ids = []
     patterns = [
-        r"eventid=(\\d+)",
-        r'["\\']eventid["\\']\\s*[:=]\\s*["\\']?(\\d+)',
-        r'["\\']Eventid["\\']\\s*[:=]\\s*["\\']?(\\d+)',
-        r'["\\']eventId["\\']\\s*[:=]\\s*["\\']?(\\d+)',
+        r"eventid=(\d+)",
+        r"""["']eventid["']\s*[:=]\s*["']?(\d+)""",
+        r"""["']Eventid["']\s*[:=]\s*["']?(\d+)""",
+        r"""["']eventId["']\s*[:=]\s*["']?(\d+)""",
     ]
     for pattern in patterns:
         for event_id in re.findall(pattern, html, re.IGNORECASE):
