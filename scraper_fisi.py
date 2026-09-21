@@ -80,7 +80,7 @@ ACRONIMI_FISI = {
     "GM1", "GM2", "GM3", "GM4", "GM5", "FFOO", "FFGG", "CSCA", "CS", "CC", "AM",
 }
 
-FONDO_KEYWORDS = ("FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "NORDIC", "NORDICO", "XC")
+FONDO_KEYWORDS = ("FONDO", "SCI DI FONDO", "LANGLAUF", "CROSS COUNTRY", "SKIROLL", "ROLLER SKI", "ROLLERSKI", "XC")
 LISTA_NERA = ("ALPINO", "SLALOM", "GIGANTE", "SUPER G", "DISCESA", "BIATHLON", "SNOWBOARD", "SKICROSS", "FREESTYLE", "ERBA", "SKELETON", "BOB", "JUMP", "SALTO")
 
 session = requests.Session()
@@ -257,6 +257,15 @@ def fetch_competitions():
     return final
 
 
+def page_discipline(soup):
+    """Ricava la disciplina mostrata nella testata della singola gara."""
+    texts = list(soup.stripped_strings)
+    for i, text in enumerate(texts):
+        if text.strip().upper() == "COMPETIZIONE" and i > 0:
+            return texts[i - 1].strip()
+    return ""
+
+
 def extract_category_and_speciality(soup):
     texts = list(soup.stripped_strings)
     category, speciality = "", ""
@@ -280,6 +289,17 @@ def scrape_race_results(race, slug, season, id_race):
     response = session.get(url, timeout=25)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
+
+    discipline = page_discipline(soup)
+    discipline_upper = discipline.upper()
+    excluded_disciplines = (
+        "COMBINATA NORDICA", "NORDIC COMBINED", "SALTO", "SKI JUMP",
+        "BIATHLON", "SCI ALPINO", "ALPINE", "SNOWBOARD", "FREESTYLE",
+        "SKELETON", "BOB", "SLITTINO",
+    )
+    if discipline and any(x in discipline_upper for x in excluded_disciplines):
+        print(f"      ↪️ idGara {id_race}: disciplina esclusa ({discipline})", flush=True)
+        return 0
 
     category, speciality = extract_category_and_speciality(soup)
     athlete_elements = soup.find_all("span", class_="x-text-content-text-primary")
