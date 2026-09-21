@@ -84,11 +84,8 @@ def _extract_event_ids(html):
 
 
 def fetch_events_legacy_feed(season):
-    """Prova il feed AJAX usato dal frontend FIS per la ricerca calendario."""
-    endpoints = [
-        "https://www-og.fis-ski.com/DB/services/feeds-for-ajx/fis-data-search.html",
-        "https://www.fis-ski.com/DB/services/feeds-for-ajx/fis-data-search.html",
-    ]
+    """Fallback sul feed AJAX del frontend FIS."""
+    endpoint = "https://www.fis-ski.com/DB/services/feeds-for-ajx/fis-data-search.html"
     params = {
         "eventselection": "results",
         "sectorcode": "CC",
@@ -104,38 +101,27 @@ def fetch_events_legacy_feed(season):
         "saveselection": "-1",
     }
 
-    for endpoint in endpoints:
-        try:
-            response = requests.get(
-                endpoint,
-                params=params,
-                headers={**HEADERS, "Accept": "application/json,text/html,*/*"},
-                timeout=30,
-            )
-            print(
-                f"   🔌 Feed FIS {endpoint.split('/')[2]}: HTTP {response.status_code}, "
-                f"{len(response.text)} caratteri",
-                flush=True,
-            )
-            if response.status_code != 200:
-                continue
+    try:
+        response = requests.get(
+            endpoint,
+            params=params,
+            headers={**HEADERS, "Accept": "application/json,text/html,*/*"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            return []
 
-            event_ids = _extract_event_ids(response.text)
-            if event_ids:
-                print(
-                    f"   ✅ Feed AJAX FIS: {len(event_ids)} eventi italiani",
-                    flush=True,
-                )
-                return event_ids
+        event_ids = _extract_event_ids(response.text)
+        if event_ids:
+            print(f"   ✅ Feed AJAX FIS: {len(event_ids)} eventi italiani", flush=True)
+            return event_ids
 
-            if DEBUG:
-                sample = re.sub(r"\\s+", " ", response.text[:800]).strip()
-                print(f"      DEBUG feed: {sample}", flush=True)
-
-        except Exception as exc:
-            print(f"⚠️ Feed AJAX FIS {endpoint}: {exc}", flush=True)
-
-        time.sleep(0.25)
+        if DEBUG:
+            sample = re.sub(r"\s+", " ", response.text[:500]).strip()
+            print(f"      DEBUG feed AJAX: {sample}", flush=True)
+    except Exception as exc:
+        if DEBUG:
+            print(f"⚠️ Feed AJAX FIS: {exc}", flush=True)
 
     return []
 
@@ -144,12 +130,7 @@ def fetch_events(season):
     """Eventi Cross-Country disputati in Italia con risultati."""
     print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
 
-    # 1) Feed AJAX realmente usato dal frontend FIS.
-    event_ids = fetch_events_legacy_feed(season)
-    if event_ids:
-        return event_ids
-
-    # 2) Fallback: pagina pubblica all-season.
+    # 1) Pagina pubblica all-season: metodo verificato sullo storico.
     all_season_urls = [
         (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
@@ -181,6 +162,11 @@ def fetch_events(season):
         except Exception as exc:
             print(f"⚠️ FIS All season metodo {idx}: {exc}", flush=True)
         time.sleep(0.25)
+
+    # 2) Fallback feed AJAX.
+    event_ids = fetch_events_legacy_feed(season)
+    if event_ids:
+        return event_ids
 
     # 3) Ultimo fallback: mese per mese.
     print("   ↪️ Fallback: scansione mese per mese", flush=True)
@@ -474,37 +460,39 @@ def main():
     total = 0
     races_attempted = 0
     for season in seasons_to_scan():
-        seed_races = ITALY_EVENT_SEEDS.get(season, [])
-        if seed_races:
-            print(f"🌍 FIS: stagione {season} - {len(seed_races)} eventi italiani identificati", flush=True)
-            race_ids = []
-            for seed_race_id in seed_races:
-                for race_id in fetch_related_races(seed_race_id):
-                    if race_id not in race_ids:
-                        race_ids.append(race_id)
-                time.sleep(0.3)
+        event_ids = fetch_events(season)
+        race_ids = []
 
-            print(f"   Trovate {len(race_ids)} race FIS nei 2 eventi italiani", flush=True)
+        for event_id in event_ids:
+            for race_id in fetch_races(event_id):
+                if race_id not in race_ids:
+                    race_ids.append(race_id)
+            time.sleep(0.3)
 
-            for race_id in race_ids:
-                total += scrape_race(race_id)
-                races_attempted += 1
-                if MAX_RACES and races_attempted >= MAX_RACES:
-                    print(f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate", flush=True)
-                    print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
-                    return
-                time.sleep(0.25)
-        else:
-            for event_id in fetch_events(season):
-                for race_id in fetch_races(event_id):
-                    total += scrape_race(race_id)
-                    races_attempted += 1
-                    if MAX_RACES and races_attempted >= MAX_RACES:
-                        print(f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate", flush=True)
-                        print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
-                        return
-                    time.sleep(0.25)
-                time.sleep(0.3)
+        # Solo se la ricerca completa non restituisce nulla, usa seed note.
+        if not race_ids:
+            seed_races = ITALY_EVENT_SEEDS.get(season, [])
+            if seed_races:
+                print(
+                    f"   ↪️ Nessun evento trovato: fallback su {len(seed_races)} seed FIS note",
+                    flush=True,
+                )
+                for seed_race_id in seed_races:
+                    for race_id in fetch_related_races(seed_race_id):
+                        if race_id not in race_ids:
+                            race_ids.append(race_id)
+                    time.sleep(0.3)
+
+        print(f"   🎿 Stagione {season}: {len(race_ids)} race FIS italiane individuate", flush=True)
+
+        for race_id in race_ids:
+            total += scrape_race(race_id)
+            races_attempted += 1
+            if MAX_RACES and races_attempted >= MAX_RACES:
+                print(f"🧪 Limite test raggiunto: {races_attempted} gare FIS esaminate", flush=True)
+                print(f"🏁 Scraper FIS completato: {total} risultati elaborati", flush=True)
+                return
+            time.sleep(0.25)
 
     print(
         f"📊 Gare salvate: {STATS['saved_races']} | già presenti: {STATS['already']} | senza classifica: {STATS['empty']} | non interpretabili: {STATS['unparsable']}",
