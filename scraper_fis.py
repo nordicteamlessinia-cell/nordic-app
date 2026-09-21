@@ -75,14 +75,90 @@ def _extract_event_ids(html):
     return ids
 
 
-def fetch_events(season):
-    """Eventi Cross-Country disputati in Italia con risultati.
+def _extract_event_ids(html):
+    """Estrae gli eventid FIS da HTML/JSON/testo mantenendo l'ordine."""
+    ids = []
+    patterns = [
+        r"eventid=(\\d+)",
+        r'["\\']eventid["\\']\\s*[:=]\\s*["\\']?(\\d+)',
+        r'["\\']Eventid["\\']\\s*[:=]\\s*["\\']?(\\d+)',
+        r'["\\']eventId["\\']\\s*[:=]\\s*["\\']?(\\d+)',
+    ]
+    for pattern in patterns:
+        for event_id in re.findall(pattern, html, re.IGNORECASE):
+            event_id = str(event_id)
+            if event_id not in ids:
+                ids.append(event_id)
+    return ids
 
-    Prima prova la vista 'All season', che per lo storico è più affidabile.
-    Se non restituisce eventid, usa il vecchio fallback mese-per-mese.
-    """
+
+def fetch_events_legacy_feed(season):
+    """Prova il feed AJAX usato dal frontend FIS per la ricerca calendario."""
+    endpoints = [
+        "https://www-og.fis-ski.com/DB/services/feeds-for-ajx/fis-data-search.html",
+        "https://www.fis-ski.com/DB/services/feeds-for-ajx/fis-data-search.html",
+    ]
+    params = {
+        "eventselection": "results",
+        "sectorcode": "CC",
+        "seasoncode": str(season),
+        "seasonmonth": f"X-{season}",
+        "nationcode": "ITA",
+        "categorycode": "",
+        "disciplinecode": "",
+        "gendercode": "",
+        "place": "",
+        "racedate": "",
+        "racecodex": "",
+        "saveselection": "-1",
+    }
+
+    for endpoint in endpoints:
+        try:
+            response = requests.get(
+                endpoint,
+                params=params,
+                headers={**HEADERS, "Accept": "application/json,text/html,*/*"},
+                timeout=30,
+            )
+            print(
+                f"   🔌 Feed FIS {endpoint.split('/')[2]}: HTTP {response.status_code}, "
+                f"{len(response.text)} caratteri",
+                flush=True,
+            )
+            if response.status_code != 200:
+                continue
+
+            event_ids = _extract_event_ids(response.text)
+            if event_ids:
+                print(
+                    f"   ✅ Feed AJAX FIS: {len(event_ids)} eventi italiani",
+                    flush=True,
+                )
+                return event_ids
+
+            if DEBUG:
+                sample = re.sub(r"\\s+", " ", response.text[:800]).strip()
+                print(f"      DEBUG feed: {sample}", flush=True)
+
+        except Exception as exc:
+            print(f"⚠️ Feed AJAX FIS {endpoint}: {exc}", flush=True)
+
+        time.sleep(0.25)
+
+    return []
+
+
+def fetch_events(season):
+    """Eventi Cross-Country disputati in Italia con risultati."""
     print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
 
+    # 1) Feed AJAX realmente usato dal frontend FIS.
+    event_ids = fetch_events_legacy_feed(season)
+    if event_ids:
+        return event_ids
+
+    # 2) Fallback: pagina pubblica all-season.
     all_season_urls = [
         (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
@@ -115,6 +191,7 @@ def fetch_events(season):
             print(f"⚠️ FIS All season metodo {idx}: {exc}", flush=True)
         time.sleep(0.25)
 
+    # 3) Ultimo fallback: mese per mese.
     print("   ↪️ Fallback: scansione mese per mese", flush=True)
     event_ids = []
 
@@ -130,14 +207,11 @@ def fetch_events(season):
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
             ids_month = _extract_event_ids(response.text)
-
             for event_id in ids_month:
                 if event_id not in event_ids:
                     event_ids.append(event_id)
-
             if ids_month:
                 print(f"   ✅ {month}: {len(ids_month)} eventi", flush=True)
-
         except Exception as exc:
             print(f"⚠️ FIS mese {month}: {exc}", flush=True)
 
