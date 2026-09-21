@@ -1,0 +1,25 @@
+name: Nordic Hub - Diagnostico FISI storico 2018
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Cerca archivi FISI 2018
+        run: python diagnose_fisi_legacy_2018.py
