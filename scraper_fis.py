@@ -66,27 +66,72 @@ def format_fis_date(text):
     return clean
 
 
+def _extract_event_ids(html):
+    """Estrae gli eventid FIS da una pagina calendario, mantenendo l'ordine."""
+    ids = []
+    for event_id in re.findall(r"eventid=(\\d+)", html, re.IGNORECASE):
+        if event_id not in ids:
+            ids.append(event_id)
+    return ids
+
+
 def fetch_events(season):
-    """Eventi Cross-Country disputati in Italia con risultati, mese per mese."""
+    """Eventi Cross-Country disputati in Italia con risultati.
+
+    Prima prova la vista 'All season', che per lo storico è più affidabile.
+    Se non restituisce eventid, usa il vecchio fallback mese-per-mese.
+    """
     print(f"🌍 FIS: scansione stagione {season} - eventi in Italia", flush=True)
+
+    all_season_urls = [
+        (
+            "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
+            f"?eventselection=results&sectorcode=CC&seasoncode={season}"
+            f"&nationcode=ITA&seasonmonth=X-{season}&saveselection=-1"
+        ),
+        (
+            "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
+            f"?sectorcode=CC&seasoncode={season}"
+            f"&nationcode=ITA&seasonmonth=X-{season}&saveselection=-1"
+        ),
+    ]
+
+    for idx, url in enumerate(all_season_urls, start=1):
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=30)
+            response.raise_for_status()
+            event_ids = _extract_event_ids(response.text)
+            if event_ids:
+                print(
+                    f"   ✅ All season metodo {idx}: {len(event_ids)} eventi italiani",
+                    flush=True,
+                )
+                return event_ids
+            print(
+                f"   ℹ️ All season metodo {idx}: nessun eventid nel sorgente HTML",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"⚠️ FIS All season metodo {idx}: {exc}", flush=True)
+        time.sleep(0.25)
+
+    print("   ↪️ Fallback: scansione mese per mese", flush=True)
     event_ids = []
 
     for month in season_months(season):
         url = (
             "https://www.fis-ski.com/DB/cross-country/calendar-results.html"
             f"?eventselection=results&place=&sectorcode=CC&seasoncode={season}&categorycode="
-            "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ita"
+            "&disciplinecode=&gendercode=&racedate=&racecodex=&nationcode=ITA"
             f"&seasonmonth={month}&saveselection=-1&seasonselection="
         )
 
         try:
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
+            ids_month = _extract_event_ids(response.text)
 
-            ids_month = []
-            for event_id in re.findall(r"eventid=(\\d+)", response.text, re.IGNORECASE):
-                if event_id not in ids_month:
-                    ids_month.append(event_id)
+            for event_id in ids_month:
                 if event_id not in event_ids:
                     event_ids.append(event_id)
 
