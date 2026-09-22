@@ -70,6 +70,15 @@ jobs:
           print("✅ meta.json:", meta)
           print("✅ Pellegrino:", athlete["name"], "| risultati:", len(detail["results"]))
           print("✅ file:", athlete["file"])
+
+          first = detail["results"][0]
+          race_path = root / "v1" / "races" / first["origine"].lower() / f"{first['id_gara']}.json"
+          if not race_path.exists():
+              raise SystemExit(f"ERRORE: file gara mancante: {race_path}")
+          race = json.loads(race_path.read_text(encoding="utf-8"))
+          if not race["items"]:
+              raise SystemExit("ERRORE: classifica gara vuota")
+          print("✅ Gara test:", first["origine"], first["id_gara"], "| atleti:", len(race["items"]))
           PY
 
       - name: Upload static API artifact
