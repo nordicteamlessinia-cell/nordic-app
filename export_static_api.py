@@ -92,6 +92,7 @@ def main():
 
     groups = {}
     total_results = 0
+    skipped_results = []
 
     with psycopg.connect(DATABASE_URL, connect_timeout=20) as conn:
         with conn.cursor() as cur:
@@ -108,6 +109,12 @@ def main():
                     name = (item.get("atleta_nome") or "").strip()
                     key = normalize_name(name)
                     if not key:
+                        skipped_results.append({
+                            "origine": item.get("origine"),
+                            "id_gara": item.get("id_gara"),
+                            "atleta_nome": name,
+                            "data_gara_iso": item.get("data_gara_iso"),
+                        })
                         continue
 
                     group = groups.get(key)
@@ -189,6 +196,7 @@ def main():
         "generated_at": generated_at,
         "athletes": len(index_items),
         "results": total_results,
+        "skipped_results": len(skipped_results),
     }
 
     write_json(
@@ -215,6 +223,13 @@ def main():
     print("==============================================")
     print(f"Atleti unici: {len(index_items)}")
     print(f"Risultati esportati: {total_results}")
+    print(f"Risultati saltati per nome non indicizzabile: {len(skipped_results)}")
+    for row in skipped_results[:20]:
+        print(
+            f"  SKIP | {row['origine']} | gara {row['id_gara']} | "
+            f"nome={row['atleta_nome']!r} | data={row['data_gara_iso']}",
+            flush=True,
+        )
     print(f"File atleta: {len(index_items)}")
     print(f"Dimensione totale: {size_bytes / 1024 / 1024:.2f} MB")
     print(f"Generato: {generated_at}")
