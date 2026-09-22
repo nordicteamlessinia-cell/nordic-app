@@ -1,0 +1,49 @@
+name: Nordic Hub - Trova Gare FISI FIS v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_shared:
+        description: 'Atleti minimi in comune'
+        required: false
+        default: '5'
+        type: string
+      min_coverage:
+        description: 'Copertura minima sul gruppo più piccolo (0.30 = 30%)'
+        required: false
+        default: '0.30'
+        type: string
+
+jobs:
+  match-races:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install "psycopg[binary]"
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Find race pairs by shared athletes
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DEDUP_MIN_SHARED: ${{ inputs.min_shared }}
+          DEDUP_MIN_COVERAGE: ${{ inputs.min_coverage }}
+        run: python match_fisi_fis_races_v2.py
