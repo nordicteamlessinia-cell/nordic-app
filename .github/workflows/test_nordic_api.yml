@@ -42,17 +42,17 @@ jobs:
 
       - name: Test health
         run: |
-          curl --fail --silent --show-error http://127.0.0.1:8000/health
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/health
           echo
 
       - name: Test athlete autocomplete
         run: |
-          curl --fail --silent --show-error --get             --data-urlencode "q=pellegrino"             --data-urlencode "limit=5"             http://127.0.0.1:8000/athletes/search
+          curl --fail --silent --show-error --get             --data-urlencode "q=pellegrino"             --data-urlencode "limit=5"             http://127.0.0.1:8000/api/athletes/search
           echo
 
       - name: Test athlete results
         run: |
-          curl --fail --silent --show-error --get             --data-urlencode "q=Federico Pellegrino"             --data-urlencode "limit=10"             http://127.0.0.1:8000/athletes/results
+          curl --fail --silent --show-error --get             --data-urlencode "q=Federico Pellegrino"             --data-urlencode "limit=10"             http://127.0.0.1:8000/api/athletes/results
           echo
 
       - name: Show API log
