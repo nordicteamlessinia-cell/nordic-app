@@ -38,6 +38,10 @@ def athlete_id(key):
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
+def safe_segment(value):
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
+
+
 def display_score(name, origin):
     # Preferisci il formato FISI e nomi non completamente maiuscoli.
     return (
@@ -188,6 +192,83 @@ def main():
             "file": f"v1/{rel_file}",
         })
 
+    # Classifiche per gara: usa le tabelle sorgente, così una classifica
+    # resta completa anche quando la vista unificata sopprime un duplicato FISI/FIS.
+    race_groups = defaultdict(list)
+
+    race_queries = [
+        (
+            "FISI",
+            """
+            SELECT
+                id_gara_fisi AS id_gara,
+                atleta_nome,
+                societa,
+                comitato,
+                categoria,
+                specialita,
+                posizione,
+                tempo,
+                gara_nome,
+                luogo,
+                data_gara,
+                data_gara_iso
+            FROM "Risultati"
+            """
+        ),
+        (
+            "FIS",
+            """
+            SELECT
+                id_gara_fis AS id_gara,
+                atleta_nome,
+                societa,
+                comitato,
+                categoria,
+                specialita,
+                posizione,
+                tempo,
+                gara_nome,
+                luogo,
+                data_gara,
+                data_gara_iso
+            FROM "Risultati_Fis"
+            """
+        ),
+    ]
+
+    with psycopg.connect(DATABASE_URL, connect_timeout=20) as conn:
+        with conn.cursor() as cur:
+            for origin, race_query in race_queries:
+                cur.execute(race_query)
+                columns = [d.name for d in cur.description]
+
+                while True:
+                    rows = cur.fetchmany(5000)
+                    if not rows:
+                        break
+
+                    for row in rows:
+                        item = {name: clean(value) for name, value in zip(columns, row)}
+                        race_id = safe_segment(item.get("id_gara"))
+                        if not race_id:
+                            continue
+                        item["origine"] = origin
+                        item["id_gara"] = str(item["id_gara"])
+                        race_groups[(origin, race_id)].append(item)
+
+    for (origin, race_id), items in race_groups.items():
+        write_json(
+            OUTPUT_DIR / "v1" / "races" / origin.lower() / f"{race_id}.json",
+            {
+                "schema_version": 1,
+                "origin": origin,
+                "race_id": race_id,
+                "count": len(items),
+                "items": items,
+            },
+        )
+
     index_items.sort(key=lambda x: x["name"].casefold())
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -197,6 +278,7 @@ def main():
         "athletes": len(index_items),
         "results": total_results,
         "skipped_results": len(skipped_results),
+        "races": len(race_groups),
     }
 
     write_json(
@@ -231,6 +313,7 @@ def main():
             flush=True,
         )
     print(f"File atleta: {len(index_items)}")
+    print(f"File gara: {len(race_groups)}")
     print(f"Dimensione totale: {size_bytes / 1024 / 1024:.2f} MB")
     print(f"Generato: {generated_at}")
 
