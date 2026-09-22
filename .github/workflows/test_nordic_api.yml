@@ -1,0 +1,60 @@
+name: Nordic Hub - Test API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install API dependencies
+        run: pip install -r requirements-api.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Start Nordic Hub API
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          nohup python -m uvicorn api_nordic:app --host 127.0.0.1 --port 8000 > /tmp/nordic-api.log 2>&1 &
+          echo $! > /tmp/nordic-api.pid
+          sleep 4
+          cat /tmp/nordic-api.log
+
+      - name: Test health
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8000/health
+          echo
+
+      - name: Test athlete autocomplete
+        run: |
+          curl --fail --silent --show-error --get             --data-urlencode "q=pellegrino"             --data-urlencode "limit=5"             http://127.0.0.1:8000/athletes/search
+          echo
+
+      - name: Test athlete results
+        run: |
+          curl --fail --silent --show-error --get             --data-urlencode "q=Federico Pellegrino"             --data-urlencode "limit=10"             http://127.0.0.1:8000/athletes/results
+          echo
+
+      - name: Show API log
+        if: always()
+        run: cat /tmp/nordic-api.log || true
