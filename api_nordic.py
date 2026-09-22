@@ -72,11 +72,12 @@ def root():
     return {
         "name": "Nordic Hub API",
         "version": "0.1.0",
-        "endpoints": ["/health", "/athletes/search", "/athletes/results"],
+        "endpoints": ["/api/health", "/api/athletes/search", "/api/athletes/results"],
     }
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     try:
         with db() as conn:
@@ -89,6 +90,7 @@ def health():
 
 
 @app.get("/athletes/search")
+@app.get("/api/athletes/search")
 def athlete_search(
     q: str = Query(..., min_length=2, max_length=80),
     limit: int = Query(20, ge=1, le=50),
@@ -145,6 +147,7 @@ def athlete_search(
 
 
 @app.get("/athletes/results")
+@app.get("/api/athletes/results")
 def athlete_results(
     q: str = Query(..., min_length=2, max_length=100),
     limit: int = Query(200, ge=1, le=1000),
