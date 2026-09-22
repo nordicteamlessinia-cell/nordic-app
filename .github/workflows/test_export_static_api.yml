@@ -1,0 +1,69 @@
+name: Nordic Hub - Test Export API JSON
+
+on:
+  workflow_dispatch:
+
+jobs:
+  export-json:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install "psycopg[binary]"
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Generate static JSON API
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STATIC_API_OUTPUT: static_api
+        run: python export_static_api.py
+
+      - name: Validate exported API
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("static_api")
+          meta = json.loads((root / "v1/meta.json").read_text(encoding="utf-8"))
+          index = json.loads((root / "v1/athletes/index.json").read_text(encoding="utf-8"))
+
+          matches = [x for x in index["items"] if "pellegrino" in x["search"]]
+          if not matches:
+              raise SystemExit("ERRORE: Federico Pellegrino non trovato nell'indice")
+
+          athlete = matches[0]
+          detail = json.loads((root / athlete["file"]).read_text(encoding="utf-8"))
+          if not detail["results"]:
+              raise SystemExit("ERRORE: file atleta senza risultati")
+
+          print("✅ meta.json:", meta)
+          print("✅ Pellegrino:", athlete["name"], "| risultati:", len(detail["results"]))
+          print("✅ file:", athlete["file"])
+          PY
+
+      - name: Upload static API artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nordic-hub-static-api
+          path: static_api
+          retention-days: 3
