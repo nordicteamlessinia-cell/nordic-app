@@ -47,9 +47,20 @@ jobs:
           meta = json.loads((root / "v1/meta.json").read_text(encoding="utf-8"))
           index = json.loads((root / "v1/athletes/index.json").read_text(encoding="utf-8"))
 
-          matches = [x for x in index["items"] if "pellegrino" in x["search"]]
-          if not matches:
-              raise SystemExit("ERRORE: Federico Pellegrino non trovato nell'indice")
+          def key(name):
+              import re, unicodedata
+              s = unicodedata.normalize("NFKD", name or "")
+              s = "".join(ch for ch in s if not unicodedata.combining(ch))
+              s = re.sub(r"[^a-z0-9]+", " ", s.lower())
+              return " ".join(sorted(s.split()))
+
+          target = key("Federico Pellegrino")
+          matches = [x for x in index["items"] if key(x["name"]) == target]
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"ERRORE: atteso 1 Federico Pellegrino, trovati {len(matches)}: "
+                  + str([x["name"] for x in matches])
+              )
 
           athlete = matches[0]
           detail = json.loads((root / athlete["file"]).read_text(encoding="utf-8"))
