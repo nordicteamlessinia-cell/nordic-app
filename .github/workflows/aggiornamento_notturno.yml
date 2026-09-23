@@ -1,11 +1,7 @@
-name: 🔄 Updater Notturno Database FISI
+name: Legacy Supabase FISI - Manuale
 
 on:
-  schedule:
-    # Esegue lo script ogni notte alle 03:00 (ora server)
-    - cron: '0 3 * * *'
   workflow_dispatch:
-    # Ti permette di cliccare il tasto "Run workflow" manualmente da GitHub se vuoi forzarlo
 
 jobs:
   aggiorna-database:
