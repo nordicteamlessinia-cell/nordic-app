@@ -1,8 +1,7 @@
-name: Update Nordic Data
+name: Legacy Supabase Update - Manuale
+
 on:
-  workflow_dispatch: # Permette di lanciarlo a mano con un tasto
-  schedule:
-    - cron: '0 18 * * *' # Gira automaticamente ogni giorno alle 18:00
+  workflow_dispatch:
 
 jobs:
   build:
