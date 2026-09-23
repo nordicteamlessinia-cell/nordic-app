@@ -1,0 +1,107 @@
+name: Nordic Hub - Aggiornamento Notturno
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:30 UTC = 05:30 in Italia con ora legale, 04:30 con ora solare
+    - cron: '30 3 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: nordic-hub-nightly
+  cancel-in-progress: false
+
+jobs:
+  update-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v4
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Aggiorna risultati FISI
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FISI_FULL_HISTORY: '0'
+          FISI_COMMITTEES: 'all'
+        run: python scraper_fisi.py
+
+      - name: Aggiorna risultati FIS
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIS_FULL_HISTORY: '0'
+          FIS_ONLY_ITALIANS: '0'
+        run: python scraper_fis.py
+
+      - name: Genera API JSON statica
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STATIC_API_OUTPUT: static_api
+        run: python export_static_api.py
+
+      - name: Verifica export
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("static_api")
+          meta = json.loads((root / "v1/meta.json").read_text(encoding="utf-8"))
+
+          if meta["athletes"] < 12000:
+              raise SystemExit(f"ERRORE: troppo pochi atleti esportati: {meta['athletes']}")
+          if meta["results"] < 190000:
+              raise SystemExit(f"ERRORE: troppo pochi risultati esportati: {meta['results']}")
+          if meta.get("races", 0) < 9000:
+              raise SystemExit(f"ERRORE: troppo poche gare esportate: {meta.get('races', 0)}")
+
+          print("✅ Export validato:", meta)
+          if meta.get("skipped_results", 0):
+              print(f"ℹ️ Record non indicizzabili saltati: {meta['skipped_results']}")
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: static_api
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: update-and-build
+
+    steps:
+      - name: Pubblica GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
