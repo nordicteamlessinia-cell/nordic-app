@@ -90,6 +90,7 @@ session.mount("http://", HTTPAdapter(max_retries=retries))
 session.headers.update({"User-Agent": "Mozilla/5.0 NordicHub/GitHubActions"})
 
 EMPTY_RESULT_DEBUG_SHOWN = False
+FORCE_REFRESH = os.getenv("FISI_FORCE_REFRESH", "0") == "1"
 
 
 def is_cross_country(item):
@@ -281,7 +282,7 @@ def extract_category_and_speciality(soup):
 
 
 def scrape_race_results(race, slug, season, id_race):
-    if fisi_race_has_results(id_race):
+    if not FORCE_REFRESH and fisi_race_has_results(id_race):
         print(f"      ℹ️ idGara {id_race}: risultati già presenti", flush=True)
         return 0
 
@@ -317,11 +318,17 @@ def scrape_race_results(race, slug, season, id_race):
                     athlete_committee = value.upper()
                     break
 
+            birth_year = athlete_texts[i + 3].strip()
+            if not re.fullmatch(r"(?:19|20)\d{2}", birth_year):
+                birth_year = ""
+
             rows.append({
                 "id_gara_fisi": str(id_race),
                 "id_comp_collegata": str(race["id_gara_fisi"]),
                 "posizione": athlete_texts[i],
+                "codice_fisi": athlete_texts[i + 1],
                 "atleta_nome": athlete_texts[i + 2],
+                "anno_nascita": birth_year,
                 "societa": athlete_texts[i + 4],
                 "tempo": athlete_texts[i + 5],
                 "categoria": category,

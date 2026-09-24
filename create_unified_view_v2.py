@@ -32,54 +32,63 @@ def main():
             for fisi_id, fis_id in RACE_PAIRS:
                 cur.execute(
                     """
-                    SELECT atleta_nome
+                    SELECT atleta_nome, anno_nascita
                     FROM "Risultati"
                     WHERE id_gara_fisi = %s
                     """,
                     (fisi_id,),
                 )
-                fisi_names = [r[0] for r in cur.fetchall()]
+                fisi_rows = cur.fetchall()
 
                 cur.execute(
                     """
-                    SELECT atleta_nome
+                    SELECT atleta_nome, anno_nascita
                     FROM "Risultati_Fis"
                     WHERE id_gara_fis = %s
                     """,
                     (fis_id,),
                 )
-                fis_names = [r[0] for r in cur.fetchall()]
+                fis_rows = cur.fetchall()
 
-                fis_norm = {norm_name(n) for n in fis_names if norm_name(n)}
-                matched_fisi_names = sorted({
-                    n for n in fisi_names
-                    if norm_name(n) and norm_name(n) in fis_norm
+                def person_key(name, year):
+                    return (norm_name(name), str(year or "").strip())
+
+                fis_keys = {
+                    person_key(name, year)
+                    for name, year in fis_rows
+                    if norm_name(name)
+                }
+
+                matched_fisi = sorted({
+                    (name, str(year or "").strip())
+                    for name, year in fisi_rows
+                    if norm_name(name) and person_key(name, year) in fis_keys
                 })
 
                 print(
                     f"🔗 FISI {fisi_id} ↔ FIS {fis_id}: "
-                    f"{len(matched_fisi_names)} atleti FISI sostituiti dalla fonte FIS",
+                    f"{len(matched_fisi)} atleti FISI sostituiti dalla fonte FIS",
                     flush=True,
                 )
 
-                for name in matched_fisi_names:
-                    suppressed.append((fisi_id, name))
+                for name, year in matched_fisi:
+                    suppressed.append((fisi_id, name, year))
 
             if suppressed:
                 values_sql = ",\n        ".join(
-                    f"({sql_string(fisi_id)}::STRING, {sql_string(name)}::STRING)"
-                    for fisi_id, name in suppressed
+                    f"({sql_string(fisi_id)}::STRING, {sql_string(name)}::STRING, {sql_string(year)}::STRING)"
+                    for fisi_id, name, year in suppressed
                 )
                 suppressed_cte = f"""
-suppressed_fisi(id_gara_fisi, atleta_nome) AS (
+suppressed_fisi(id_gara_fisi, atleta_nome, anno_nascita) AS (
     VALUES
         {values_sql}
 ),
 """
             else:
                 suppressed_cte = """
-suppressed_fisi(id_gara_fisi, atleta_nome) AS (
-    SELECT NULL::STRING, NULL::STRING WHERE false
+suppressed_fisi(id_gara_fisi, atleta_nome, anno_nascita) AS (
+    SELECT NULL::STRING, NULL::STRING, NULL::STRING WHERE false
 ),
 """
 
@@ -98,6 +107,7 @@ fisi_kept AS (
         FROM suppressed_fisi s
         WHERE s.id_gara_fisi = r.id_gara_fisi
           AND s.atleta_nome = r.atleta_nome
+          AND COALESCE(s.anno_nascita, '') = COALESCE(r.anno_nascita, '')
     )
 )
 SELECT
@@ -107,7 +117,9 @@ SELECT
     NULL::STRING AS id_gara_fis,
     r.id_comp_collegata::STRING AS id_comp_collegata,
     r.atleta_nome::STRING AS atleta_nome,
+    r.codice_fisi::STRING AS codice_fisi,
     NULL::STRING AS codice_fis,
+    r.anno_nascita::STRING AS anno_nascita,
     NULL::STRING AS nazione,
     r.societa::STRING AS societa,
     r.comitato::STRING AS comitato,
@@ -131,7 +143,9 @@ SELECT
     r.id_gara_fis::STRING AS id_gara_fis,
     NULL::STRING AS id_comp_collegata,
     r.atleta_nome::STRING AS atleta_nome,
+    NULL::STRING AS codice_fisi,
     r.codice_fis::STRING AS codice_fis,
+    r.anno_nascita::STRING AS anno_nascita,
     r.nazione::STRING AS nazione,
     r.societa::STRING AS societa,
     r.comitato::STRING AS comitato,
