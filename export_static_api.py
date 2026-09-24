@@ -26,6 +26,29 @@ def normalize_name(value):
     return " ".join(sorted(tokens))
 
 
+def normalize_birth_year(value):
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"(?:19|20)\d{2}", text) else ""
+
+
+def identity_key(item):
+    name_key = normalize_name(item.get("atleta_nome") or "")
+    year = normalize_birth_year(item.get("anno_nascita"))
+    if year:
+        # La coppia nome normalizzato + anno permette di unire la stessa persona
+        # tra FISI e FIS senza fondere omonimi di età diversa.
+        return f"{name_key}|year:{year}"
+
+    if item.get("origine") == "FISI" and item.get("codice_fisi"):
+        return f"{name_key}|fisi:{str(item['codice_fisi']).strip()}"
+
+    if item.get("origine") == "FIS" and item.get("codice_fis"):
+        return f"{name_key}|fis:{str(item['codice_fis']).strip()}"
+
+    # Fallback solo per record storici che non hanno ancora un identificativo.
+    return f"{name_key}|unknown"
+
+
 def search_text(value):
     text = unicodedata.normalize("NFKD", value or "")
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
@@ -77,7 +100,9 @@ def main():
             origine,
             id_gara,
             atleta_nome,
+            codice_fisi,
             codice_fis,
+            anno_nascita,
             nazione,
             societa,
             comitato,
@@ -111,8 +136,8 @@ def main():
                 for row in rows:
                     item = {name: clean(value) for name, value in zip(columns, row)}
                     name = (item.get("atleta_nome") or "").strip()
-                    key = normalize_name(name)
-                    if not key:
+                    name_key = normalize_name(name)
+                    if not name_key:
                         skipped_results.append({
                             "origine": item.get("origine"),
                             "id_gara": item.get("id_gara"),
@@ -121,6 +146,7 @@ def main():
                         })
                         continue
 
+                    key = identity_key(item)
                     group = groups.get(key)
                     if group is None:
                         aid = athlete_id(key)
@@ -131,7 +157,9 @@ def main():
                             "display_score": display_score(name, item.get("origine")),
                             "aliases": set(),
                             "origins": set(),
+                            "fisi_code": None,
                             "fis_code": None,
+                            "birth_year": normalize_birth_year(item.get("anno_nascita")) or None,
                             "nation": None,
                             "results": [],
                         }
@@ -145,8 +173,12 @@ def main():
                     group["aliases"].add(name)
                     if item.get("origine"):
                         group["origins"].add(item["origine"])
+                    if item.get("codice_fisi") and not group["fisi_code"]:
+                        group["fisi_code"] = str(item["codice_fisi"])
                     if item.get("codice_fis") and not group["fis_code"]:
                         group["fis_code"] = str(item["codice_fis"])
+                    if not group["birth_year"]:
+                        group["birth_year"] = normalize_birth_year(item.get("anno_nascita")) or None
                     if item.get("nazione") and item["nazione"] not in ("N/D", ""):
                         group["nation"] = item["nazione"]
 
@@ -167,7 +199,9 @@ def main():
             "name": group["display_name"],
             "aliases": sorted(group["aliases"], key=str.casefold),
             "origins": sorted(group["origins"]),
+            "fisi_code": group["fisi_code"],
             "fis_code": group["fis_code"],
+            "birth_year": group["birth_year"],
             "nation": group["nation"],
             "count": len(results),
             "results": results,
@@ -180,12 +214,22 @@ def main():
             if r.get("data_gara_iso")
         ]
 
+        search_parts = list(sorted(group["aliases"]))
+        if group["birth_year"]:
+            search_parts.append(group["birth_year"])
+        if group["fisi_code"]:
+            search_parts.append(group["fisi_code"])
+        if group["fis_code"]:
+            search_parts.append(group["fis_code"])
+
         index_items.append({
             "id": aid,
             "name": group["display_name"],
-            "search": search_text(" ".join(sorted(group["aliases"]))),
+            "search": search_text(" ".join(search_parts)),
             "origins": sorted(group["origins"]),
+            "fisi_code": group["fisi_code"],
             "fis_code": group["fis_code"],
+            "birth_year": group["birth_year"],
             "nation": group["nation"],
             "count": len(results),
             "last_date": max(dates) if dates else None,
@@ -203,6 +247,8 @@ def main():
             SELECT
                 id_gara_fisi AS id_gara,
                 atleta_nome,
+                codice_fisi,
+                anno_nascita,
                 societa,
                 comitato,
                 categoria,
@@ -222,6 +268,8 @@ def main():
             SELECT
                 id_gara_fis AS id_gara,
                 atleta_nome,
+                codice_fis,
+                anno_nascita,
                 societa,
                 comitato,
                 categoria,
