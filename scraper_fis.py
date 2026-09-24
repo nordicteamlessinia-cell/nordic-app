@@ -286,11 +286,14 @@ def parse_result_row(row):
     if name_node:
         name = _strip_ski_brand(name_node.get_text(" ", strip=True))
         nation = nation_node.get_text(" ", strip=True) if nation_node else "N/D"
+        row_text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", row_text)
+        birth_year = year_match.group(1) if year_match else ""
         columns = [re.sub(r"\s+", " ", col.get_text(" ", strip=True)) for col in row.find_all("div") if col.get_text(" ", strip=True)]
         position = columns[0] if columns else "N/D"
         result_time = columns[-2] if len(columns) > 2 else "N/D"
         fis_points = columns[-1] if len(columns) > 2 else ""
-        return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": ""}
+        return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": "", "year": birth_year}
 
     text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
     if not text:
@@ -343,7 +346,15 @@ def parse_result_row(row):
         else:
             result_time = rest_parts[-1]
 
-    return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": fis_code}
+    return {
+        "name": name,
+        "nation": nation,
+        "position": position,
+        "time": result_time,
+        "points": fis_points,
+        "fis_code": fis_code,
+        "year": match.group("year"),
+    }
 
 
 def scrape_race(race_id):
@@ -416,6 +427,7 @@ def scrape_race(race_id):
                 "id_gara_fis": str(race_id),
                 "atleta_nome": parsed["name"],
                 "codice_fis": parsed["fis_code"],
+                "anno_nascita": parsed.get("year", ""),
                 "nazione": parsed["nation"],
                 "societa": "N/D",
                 "comitato": "FIS",
