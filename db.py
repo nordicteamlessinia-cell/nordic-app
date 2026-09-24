@@ -93,13 +93,15 @@ def upsert_risultati_fisi(rows):
 
     query = '''
         INSERT INTO "Risultati" (
-            id_gara_fisi, id_comp_collegata, atleta_nome, societa,
-            comitato, categoria, posizione, tempo, gara_nome,
-            specialita, luogo, data_gara, data_gara_iso
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            id_gara_fisi, id_comp_collegata, atleta_nome, codice_fisi,
+            anno_nascita, societa, comitato, categoria, posizione, tempo,
+            gara_nome, specialita, luogo, data_gara, data_gara_iso
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id_gara_fisi, atleta_nome, categoria, posizione)
         DO UPDATE SET
             id_comp_collegata = excluded.id_comp_collegata,
+            codice_fisi = excluded.codice_fisi,
+            anno_nascita = excluded.anno_nascita,
             societa = excluded.societa,
             comitato = excluded.comitato,
             tempo = excluded.tempo,
@@ -116,6 +118,8 @@ def upsert_risultati_fisi(rows):
             _text(r.get("id_gara_fisi")),
             _text(r.get("id_comp_collegata")),
             _text(r.get("atleta_nome"), "N/D"),
+            _text(r.get("codice_fisi")),
+            _text(r.get("anno_nascita")),
             _text(r.get("societa"), "N/D"),
             _text(r.get("comitato"), "N/D"),
             _text(r.get("categoria"), "Generale"),
@@ -143,13 +147,14 @@ def upsert_risultati_fis(rows):
 
     query = '''
         INSERT INTO "Risultati_Fis" (
-            id_gara_fis, atleta_nome, codice_fis, nazione, societa,
-            comitato, categoria, specialita, posizione, tempo,
+            id_gara_fis, atleta_nome, codice_fis, anno_nascita, nazione,
+            societa, comitato, categoria, specialita, posizione, tempo,
             punti_fis, gara_nome, luogo, data_gara, data_gara_iso
-        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (id_gara_fis, atleta_nome, categoria, posizione)
         DO UPDATE SET
             codice_fis = excluded.codice_fis,
+            anno_nascita = excluded.anno_nascita,
             nazione = excluded.nazione,
             societa = excluded.societa,
             comitato = excluded.comitato,
@@ -168,6 +173,7 @@ def upsert_risultati_fis(rows):
             _text(r.get("id_gara_fis")),
             _text(r.get("atleta_nome"), "N/D"),
             _text(r.get("codice_fis")),
+            _text(r.get("anno_nascita")),
             _text(r.get("nazione"), "N/D"),
             _text(r.get("societa"), "N/D"),
             _text(r.get("comitato"), "FIS"),
