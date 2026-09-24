@@ -1,0 +1,210 @@
+name: Nordic Hub - Backfill Identita Atleti
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout athlete identity fix
+        uses: actions/checkout@v4
+        with:
+          ref: athlete-identity-fix
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Add identity columns
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python migrate_athlete_identity.py
+
+  fisi:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        season: [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+
+    steps:
+      - name: Checkout athlete identity fix
+        uses: actions/checkout@v4
+        with:
+          ref: athlete-identity-fix
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Refresh FISI season ${{ matrix.season }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FISI_SEASONS: ${{ matrix.season }}
+          FISI_COMMITTEES: all
+          FISI_FORCE_REFRESH: '1'
+        run: python scraper_fisi.py
+
+  fis:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        season: [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027]
+
+    steps:
+      - name: Checkout athlete identity fix
+        uses: actions/checkout@v4
+        with:
+          ref: athlete-identity-fix
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Refresh FIS season ${{ matrix.season }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIS_SEASONS: ${{ matrix.season }}
+          FIS_ONLY_ITALIANS: '0'
+          FIS_FORCE_REFRESH: '1'
+        run: python scraper_fis.py
+
+  validate:
+    needs: [fisi, fis]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout athlete identity fix
+        uses: actions/checkout@v4
+        with:
+          ref: athlete-identity-fix
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Rebuild unified view with athlete identity
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python create_unified_view_v2.py
+
+      - name: Export static API
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STATIC_API_OUTPUT: static_api
+        run: python export_static_api.py
+
+      - name: Validate identity split
+        run: |
+          python - <<'PY'
+          import json
+          import unicodedata
+          import re
+          from pathlib import Path
+
+          def norm(value):
+              s = unicodedata.normalize("NFKD", value or "")
+              s = "".join(ch for ch in s if not unicodedata.combining(ch))
+              s = re.sub(r"[^a-z0-9]+", " ", s.lower())
+              return " ".join(sorted(s.split()))
+
+          data = json.loads(Path("static_api/v1/athletes/index.json").read_text(encoding="utf-8"))
+          matches = [x for x in data["items"] if norm(x.get("name")) == norm("Andrea Erbisti")]
+
+          print("Andrea Erbisti trovati:")
+          for x in matches:
+              print({
+                  "id": x.get("id"),
+                  "name": x.get("name"),
+                  "birth_year": x.get("birth_year"),
+                  "fisi_code": x.get("fisi_code"),
+                  "fis_code": x.get("fis_code"),
+                  "count": x.get("count"),
+              })
+
+          years = {str(x.get("birth_year") or "") for x in matches}
+          if len(matches) < 2 or len({y for y in years if y}) < 2:
+              raise SystemExit("ERRORE: omonimi Andrea Erbisti non separati correttamente")
+
+          meta = json.loads(Path("static_api/v1/meta.json").read_text(encoding="utf-8"))
+          if meta["athletes"] < 12000 or meta["results"] < 190000:
+              raise SystemExit(f"ERRORE export: {meta}")
+
+          print("✅ Identità atleta validata")
+          PY
+
+      - name: Upload static API test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-api-athlete-identity-test
+          path: static_api
+          retention-days: 3
