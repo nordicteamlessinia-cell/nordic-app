@@ -279,82 +279,87 @@ def _strip_ski_brand(name):
     return " ".join(parts).strip()
 
 
-def parse_result_row(row):
-    name_node = row.find("div", class_="athlete-name")
-    nation_node = row.find("span", class_="country__name-short")
+def parse_result_text(text, section_status=None):
+    """First column is a rank only when another, separate bib column follows.
 
-    if name_node:
-        name = _strip_ski_brand(name_node.get_text(" ", strip=True))
-        nation = nation_node.get_text(" ", strip=True) if nation_node else "N/D"
-        row_text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
-        year_match = re.search(r"\b((?:19|20)\d{2})\b", row_text)
-        birth_year = year_match.group(1) if year_match else ""
-        columns = [re.sub(r"\s+", " ", col.get_text(" ", strip=True)) for col in row.find_all("div") if col.get_text(" ", strip=True)]
-        position = columns[0] if columns else "N/D"
-        result_time = columns[-2] if len(columns) > 2 else "N/D"
-        fis_points = columns[-1] if len(columns) > 2 else ""
-        return {"name": name, "nation": nation, "position": position, "time": result_time, "points": fis_points, "fis_code": "", "year": birth_year}
-
-    text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+    An unplaced row may begin with just BIB FIS_CODE NAME YEAR NATION.
+    Never turn the bib into a rank, even when the status heading is unavailable.
+    """
+    text = re.sub(r"\s+", " ", text or "").strip()
     if not text:
         return None
-
-    # Current FIS row example:
-    # 1 202 3290935 ARTUSI Aksel 2004 ITA 2:14.56 72.08
-    match = re.match(
-        r"^(?P<position>\d+|DNS|DNF|DSQ)\s+"
-        r"(?P<bib>\d+)\s+"
-        r"(?P<fis_code>\d{6,8})\s+"
-        r"(?P<name>.+?)\s+"
-        r"(?P<year>(?:19|20)\d{2})\s+"
-        r"(?P<nation>[A-Z]{3})"
-        r"(?:\s+(?P<rest>.*))?$",
-        text,
-        re.IGNORECASE,
+    name_tail = (
+        r"(?P<name>.+?)\s+(?P<year>(?:19|20)\d{2})\s+"
+        r"(?P<nation>[A-Z]{3})(?:\s+(?P<rest>.*))?$"
     )
-
-    if match:
-        fis_code = match.group("fis_code")
-    else:
-        match = re.match(
-            r"^(?P<position>\d+|DNS|DNF|DSQ)\s+"
-            r"(?P<bib>\d+)\s+"
-            r"(?P<name>.+?)\s+"
-            r"(?P<year>(?:19|20)\d{2})\s+"
-            r"(?P<nation>[A-Z]{3})"
-            r"(?:\s+(?P<rest>.*))?$",
-            text,
-            re.IGNORECASE,
-        )
-        fis_code = ""
-
+    explicit_status = r"DNS|DNF|DSQ|DQ|LAP|NPS"
+    # A row with an explicit status and just one number may omit the bib.
+    patterns = [
+        (rf"^(?P<position>{explicit_status}|\d+)\s+(?P<bib>\d+)\s+"
+         rf"(?P<fis_code>\d{{6,8}})\s+{name_tail}", True),
+        (rf"^(?P<position>{explicit_status}|\d+)\s+(?P<bib>\d{{1,4}})\s+"
+         rf"{name_tail}", True),
+        (rf"^(?P<position>{explicit_status})\s+(?P<fis_code>\d{{6,8}})\s+"
+         rf"{name_tail}", True),
+        (rf"^(?P<bib>\d+)\s+(?P<fis_code>\d{{6,8}})\s+{name_tail}", False),
+    ]
+    match = None
+    has_rank = False
+    for pattern, ranked in patterns:
+        match = re.match(pattern, text, re.IGNORECASE)
+        if match:
+            has_rank = ranked
+            break
     if not match:
         return None
-
-    name = _strip_ski_brand(match.group("name"))
-    nation = match.group("nation").upper()
-    position = match.group("position").upper()
-    rest = (match.group("rest") or "").strip()
-    rest_parts = rest.split()
-
+    data = match.groupdict()
+    position = (data.get("position") or section_status or "N/D").upper()
+    if position == "DQ":
+        position = "DSQ"
+    rest = (data.get("rest") or "").strip().split()
     result_time = "N/D"
     fis_points = ""
-    if rest_parts:
-        if len(rest_parts) >= 2 and re.fullmatch(r"-?\d+(?:\.\d+)?", rest_parts[-1]):
-            fis_points = rest_parts[-1]
-            result_time = rest_parts[-2]
+    if has_rank and position.isdigit() and rest:
+        if len(rest) >= 2 and re.fullmatch(r"-?\d+(?:\.\d+)?", rest[-1]):
+            fis_points = rest[-1]
+            result_time = rest[-2]
         else:
-            result_time = rest_parts[-1]
-
+            result_time = rest[-1]
     return {
-        "name": name,
-        "nation": nation,
+        "name": _strip_ski_brand(data["name"]),
+        "nation": data["nation"].upper(),
         "position": position,
         "time": result_time,
         "points": fis_points,
-        "fis_code": fis_code,
-        "year": match.group("year"),
+        "fis_code": data.get("fis_code") or "",
+        "year": data["year"],
     }
+
+
+def parse_result_row(row, section_status=None):
+    text = row.get_text(" ", strip=True)
+    return parse_result_text(text, section_status)
+
+
+def _section_status(row):
+    """Use only an explicit nearby FIS section heading for an unplaced row."""
+    for previous in row.find_all_previous(limit=400):
+        if previous.name == "a" and "table-row" in (previous.get("class") or []):
+            # Other unplaced athletes belong to this section; a classified
+            # athlete marks its boundary if the heading is absent.
+            parsed = parse_result_text(previous.get_text(" ", strip=True))
+            if parsed and parsed["position"].isdigit():
+                break
+        text = re.sub(r"\s+", " ", previous.get_text(" ", strip=True)).strip()
+        if len(text) > 80:
+            continue
+        if re.search(r"\b(?:DID NOT START|NOT STARTED|DNS)\b", text, re.I):
+            return "DNS"
+        if re.search(r"\b(?:DID NOT FINISH|NOT FINISHED|DNF)\b", text, re.I):
+            return "DNF"
+        if re.search(r"\b(?:DISQUALIFIED|DSQ)\b", text, re.I):
+            return "DSQ"
+    return None
 
 
 def scrape_race(race_id):
@@ -386,11 +391,7 @@ def scrape_race(race_id):
     athlete_rows = []
     for row in all_rows:
         row_text = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
-        if row.find("div", class_="athlete-name") or re.match(
-            r"^(?:\d+|DNS|DNF|DSQ)\s+\d+\s+(?:\d{6,8}\s+)?.+?\s+(?:19|20)\d{2}\s+[A-Z]{3}\b",
-            row_text,
-            re.IGNORECASE,
-        ):
+        if parse_result_text(row_text, _section_status(row)):
             athlete_rows.append(row)
 
     if not athlete_rows:
@@ -412,7 +413,7 @@ def scrape_race(race_id):
     unparsable_samples = []
     for row in athlete_rows:
         try:
-            parsed = parse_result_row(row)
+            parsed = parse_result_row(row, _section_status(row))
             if not parsed:
                 if len(unparsable_samples) < 3:
                     sample = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
