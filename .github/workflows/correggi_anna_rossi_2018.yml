@@ -1,0 +1,39 @@
+name: Nordic Hub - Correggi Anna Rossi 2018
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout cockroach-migration
+        uses: actions/checkout@v6
+        with:
+          ref: cockroach-migration
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install "psycopg[binary]"
+
+      - name: Install CockroachDB CA certificate
+        env:
+          COCKROACH_CA_URL: ${{ secrets.COCKROACH_CA_URL }}
+        run: |
+          test -n "$COCKROACH_CA_URL" || (echo "COCKROACH_CA_URL secret mancante" && exit 1)
+          mkdir -p "$HOME/.postgresql"
+          curl --fail --silent --show-error --location "$COCKROACH_CA_URL" -o "$HOME/.postgresql/root.crt"
+          chmod 600 "$HOME/.postgresql/root.crt"
+
+      - name: Correggi risultato verificato
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python correggi_anna_rossi_2018.py
