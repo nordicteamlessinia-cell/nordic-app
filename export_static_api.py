@@ -31,13 +31,24 @@ def normalize_birth_year(value):
     return text if re.fullmatch(r"(?:19|20)\d{2}", text) else ""
 
 
-def identity_key(item):
+def identity_key(item, known_years):
     name_key = normalize_name(item.get("atleta_nome") or "")
     year = normalize_birth_year(item.get("anno_nascita"))
     if year:
         # La coppia nome normalizzato + anno permette di unire la stessa persona
         # tra FISI e FIS senza fondere omonimi di età diversa.
         return f"{name_key}|year:{year}"
+
+    # Lo stesso codice federale e lo stesso nome possono recuperare un unico
+    # anno già noto da altri risultati. Se ci sono anni in conflitto, non
+    # decidiamo quale atleta sia.
+    origin = item.get("origine")
+    field = "codice_fis" if origin == "FIS" else "codice_fisi"
+    federal_code = str(item.get(field) or "").strip()
+    if federal_code and federal_code.upper() not in ("N/D", "-", "0"):
+        candidates = known_years[(name_key, origin, federal_code)]
+        if len(candidates) == 1:
+            return f"{name_key}|year:{next(iter(candidates))}"
 
     if item.get("origine") == "FISI" and item.get("codice_fisi"):
         return f"{name_key}|fisi:{str(item['codice_fisi']).strip()}"
@@ -123,6 +134,18 @@ def main():
     total_results = 0
     skipped_results = []
 
+    known_years = defaultdict(set)
+    with psycopg.connect(DATABASE_URL, connect_timeout=20) as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT origine, atleta_nome, codice_fisi, codice_fis, anno_nascita '
+                        'FROM "Risultati_Unificati"')
+            for origin, name, fisi, fis, birth in cur:
+                year = normalize_birth_year(birth)
+                name_key = normalize_name(name)
+                federal_code = str((fis if origin == "FIS" else fisi) or "").strip()
+                if year and name_key and federal_code and federal_code.upper() not in ("N/D", "-", "0"):
+                    known_years[(name_key, origin, federal_code)].add(year)
+
     with psycopg.connect(DATABASE_URL, connect_timeout=20) as conn:
         with conn.cursor() as cur:
             cur.execute(query)
@@ -146,7 +169,7 @@ def main():
                         })
                         continue
 
-                    key = identity_key(item)
+                    key = identity_key(item, known_years)
                     group = groups.get(key)
                     if group is None:
                         aid = athlete_id(key)
