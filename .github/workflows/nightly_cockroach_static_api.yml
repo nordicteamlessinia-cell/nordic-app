@@ -3,8 +3,9 @@ name: Nordic Hub - Aggiornamento Notturno
 on:
   workflow_dispatch:
   schedule:
-    # 03:30 UTC = 05:30 in Italia con ora legale, 04:30 con ora solare
-    - cron: '30 3 * * *'
+    # Lunedì e martedì alle 12:00 in Italia, anche con il cambio dell'ora.
+    - cron: '0 12 * * 1,2'
+      timezone: 'Europe/Rome'
 
 permissions:
   contents: read
