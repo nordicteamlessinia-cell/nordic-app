@@ -1,11 +1,8 @@
-name: Nordic Hub - Aggiornamento Notturno
+name: Nordic Hub - CockroachDB (solo manuale)
 
 on:
   workflow_dispatch:
-  schedule:
-    # Lunedì e martedì alle 12:00 in Italia, anche con il cambio dell'ora.
-    - cron: '0 12 * * 1,2'
-      timezone: 'Europe/Rome'
+  # Aggiornamento automatico trasferito al timer del contenitore Proxmox 103.
 
 permissions:
   contents: read
