@@ -5,6 +5,8 @@ on:
     branches: [proxmox-static-api]
     paths:
       - 'static_api/**'
+      - 'proxmox/validate_local_api.py'
+      - '.github/workflows/publish_proxmox_static_api.yml'
 
 permissions:
   contents: read
@@ -24,47 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verifica API prima della pubblicazione
-        run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          root = Path("static_api")
-          meta = json.loads((root / "v1/meta.json").read_text(encoding="utf-8"))
-          index = json.loads((root / "v1/athletes/index.json").read_text(encoding="utf-8"))
-          items = index["items"]
-
-          def check(condition, message):
-              if not condition:
-                  raise SystemExit(message)
-
-          check(meta["athletes"] >= 12000, "Troppo pochi profili atleta")
-          check(meta["results"] >= 199110, "Risultati inferiori alla copia locale verificata")
-          check(meta["races"] >= 9351, "Gare inferiori alla copia locale verificata")
-          check(len(items) == meta["athletes"] == index["count"], "Conteggio atleti incoerente")
-          check(len({a["id"] for a in items}) == len(items), "ID atleta duplicati")
-          check(sum(a["count"] for a in items) == meta["results"], "Conteggio risultati incoerente")
-
-          athlete_files = set()
-          for athlete in items:
-              path = root / athlete["file"]
-              check(path.is_file(), f"File atleta mancante: {path}")
-              check(path.resolve().is_relative_to(root.resolve()), "Percorso atleta non valido")
-              detail = json.loads(path.read_text(encoding="utf-8"))
-              check(detail["id"] == athlete["id"], f"ID incoerente: {path}")
-              check(len(detail["results"]) == detail["count"] == athlete["count"],
-                    f"Conteggio atleta incoerente: {path}")
-              athlete_files.add(path.resolve())
-
-          actual_files = {p.resolve() for p in (root / "v1/athletes/data").rglob("*.json")}
-          check(actual_files == athlete_files, "File atleta aggiuntivi o mancanti")
-          races = list((root / "v1/races").rglob("*.json"))
-          check(len(races) == meta["races"], "Conteggio file gara incoerente")
-          for path in races:
-              race = json.loads(path.read_text(encoding="utf-8"))
-              check(len(race["items"]) == race["count"], f"Classifica incoerente: {path}")
-          print("API locale validata:", meta)
-          PY
+        run: python3 proxmox/validate_local_api.py static_api
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

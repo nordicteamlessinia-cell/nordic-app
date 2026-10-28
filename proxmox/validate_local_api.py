@@ -27,9 +27,40 @@ for athlete in items:
     expected.add(path)
 check(expected == {p.resolve() for p in (root / "v1/athletes/data").rglob("*.json")},
       "File atleta aggiuntivi o mancanti")
-races = list((root / "v1/races").rglob("*.json"))
+index_path = root / "v1/races/index.json"
+races = [p for p in (root / "v1/races").rglob("*.json") if p != index_path]
 check(len(races) == meta["races"], "Conteggio file gara incoerente")
 for path in races:
     race = json.loads(path.read_text(encoding="utf-8"))
     check(len(race["items"]) == race["count"], "Conteggio classifica incoerente")
-print("API validata:", meta, flush=True)
+race_index = json.loads(index_path.read_text(encoding="utf-8"))
+indexed = race_index["items"]
+check(len(indexed) == race_index["count"] == meta["races"], "Conteggio indice gare incoerente")
+check(race_index["generated_at"] == meta["generated_at"], "Indice gare non aggiornato")
+paths = set()
+for item in indexed:
+    origin = item.get("origine")
+    race_id = item.get("id_gara")
+    check(origin in ("FIS", "FISI") and isinstance(race_id, str) and race_id,
+          "Fonte o ID non valido nell'indice gare")
+    path = (root / item["file"]).resolve()
+    check(path.is_relative_to((root / "v1/races").resolve()), "Percorso gara non valido")
+    check(path == (root / "v1/races" / origin.lower() / f"{race_id}.json").resolve(),
+          "Percorso gara incoerente")
+    check(path not in paths, "Gara duplicata nell'indice")
+    check(path.is_file(), "Classifica indicizzata mancante")
+    detail = json.loads(path.read_text(encoding="utf-8"))
+    check(detail["origin"] == origin and detail["race_id"] == race_id, "Identita gara incoerente")
+    check(item["results_count"] == detail["count"], "Numero risultati gara incoerente")
+    for field, source_field in (("societa", "societa"), ("categorie", "categoria")):
+        def clean(value):
+            text = str(value or "").strip()
+            return "" if text.upper() in ("", "-", "N/D", "NONE", "NULL") else text
+        expected_values = {clean(row.get(source_field)) for row in detail["items"]} - {""}
+        check(isinstance(item[field], list) and all(isinstance(v, str) for v in item[field]),
+              f"Campo {field} non valido")
+        check(set(item[field]) == expected_values and len(item[field]) == len(expected_values),
+              f"Campo {field} incoerente")
+    paths.add(path)
+check(paths == {p.resolve() for p in races}, "Indice gare incompleto o con file aggiuntivi")
+print("API e indice ricerca validati:", meta, flush=True)
