@@ -44,6 +44,33 @@ def result_day(row):
                 pass
     return None
 
+def season_for_row(row):
+    day = result_day(row)
+    if day is None:
+        return "Senza data"
+    first = day.year if day.month >= 9 else day.year - 1
+    return f"{first}/{first + 1}"
+
+def clubs_for_results(rows):
+    by_season = {}
+    for row in rows:
+        name = clean_text(row.get("societa"))
+        if result_day(row) is not None and valid_club(name):
+            by_season.setdefault(season_for_row(row), set()).add(name)
+    assigned = []
+    for row in rows:
+        name = clean_text(row.get("societa"))
+        if valid_club(name):
+            assigned.append(name)
+        elif not name and result_day(row) is not None:
+            candidates = by_season.get(season_for_row(row), set())
+            assigned.append(next(iter(candidates)) if len(candidates) == 1 else "")
+        elif not name:
+            assigned.append("")
+        else:
+            assigned.append("")
+    return assigned
+
 # Verifica indipendente delle aggregazioni usando le righe originali.
 def filter_keys(row):
     day = result_day(row)
@@ -63,6 +90,7 @@ def stat_cell(key):
 
 expected_rosters = {}
 expected_excluded = {}
+expected_inferred_results = 0
 athletes_by_id = {a["id"]: a for a in items}
 expected = set()
 for athlete in items:
@@ -72,28 +100,30 @@ for athlete in items:
     check(detail["id"] == athlete["id"], "ID incoerente")
     check(len(detail["results"]) == detail["count"] == athlete["count"], "Conteggio atleta incoerente")
     stat_cell('["Tutte","Tutti"]')["athletes"].add(athlete["id"])
-    for row in detail["results"]:
+    assigned_clubs = clubs_for_results(detail["results"])
+    for row, assigned_club in zip(detail["results"], assigned_clubs):
         for key in filter_keys(row):
             data = stat_cell(key)
             data["athletes"].add(athlete["id"])
             data["results"] += 1
-            name = clean_text(row.get("societa"))
-            if valid_club(name):
+            name = assigned_club
+            if name:
                 members = expected_facets.setdefault(name, {}).setdefault(key, {})
                 member = members.setdefault(athlete["id"], {"results_count": 0, "last_date": ""})
                 member["results_count"] += 1
                 day = result_day(row)
                 if day:
                     member["last_date"] = max(member["last_date"], day.isoformat())
-        club_name = clean_text(row.get("societa"))
+        if not clean_text(row.get("societa")) and assigned_club:
+            expected_inferred_results += 1
+        club_name = assigned_club
         if not club_name:
+            raw_club_name = clean_text(row.get("societa"))
+            if not raw_club_name:
+                continue
+            expected_excluded[raw_club_name] = expected_excluded.get(raw_club_name, 0) + 1
             continue
-        if not valid_club(club_name):
-            expected_excluded[club_name] = expected_excluded.get(club_name, 0) + 1
-            continue
-        day = result_day(row)
-        start = (day.year if day.month >= 9 else day.year - 1) if day else None
-        season = f"{start}/{start + 1}" if day else "Senza data"
+        season = season_for_row(row)
         key = (club_name, season, athlete["id"])
         data = expected_rosters.setdefault(key, {"count": 0, "dates": [], "origins": set()})
         data["count"] += 1
@@ -148,6 +178,8 @@ for item in indexed:
 check(paths == {p.resolve() for p in races}, "Indice gare incompleto o con file aggiuntivi")
 clubs = json.loads((root / "v1/clubs/index.json").read_text(encoding="utf-8"))
 check(clubs["count"] == len(clubs["items"]), "Conteggio societa incoerente")
+check(clubs.get("inferred_results_count") == expected_inferred_results,
+      "Conteggio risultati con societa inferita incoerente")
 check(clubs["generated_at"] == meta["generated_at"], "Indice societa non aggiornato")
 check(len({club["id"] for club in clubs["items"]}) == clubs["count"], "ID societa duplicati")
 actual_rosters = set()
